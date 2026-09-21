@@ -232,6 +232,17 @@ class Post:
     # suite asserts `page` + `position` is unique across a run.
     page: Optional[int] = None
     position: Optional[int] = None
+# The family's name for the row class, kept as an alias.
+#
+# Four siblings do the same (`Product = Post`, `= Market`, `= Answer`,
+# `= Item`), and the reason is concrete rather than cosmetic: tooling
+# written against this family — including a workflow step that imports the
+# row class by name — expects `Product`. This repo shipped without it and
+# CI went red on the first push. The fix there was to stop the workflow
+# reimplementing a shipped check at all; this alias is the second half,
+# so anything else reaching for the family name finds it.
+Product = Post
+
 ROW_CLASS_BY_MODE = {"hot": Post, "user": Post, "post": Post}
 
 # Modes whose rows are one-per-sku, and therefore safe to dedupe on `sku`
