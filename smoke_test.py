@@ -1800,6 +1800,41 @@ def test_fixtures_are_scrubbed():
               "every fixture uid is renumbered out of the real range")
 
 
+def test_the_workflow_does_not_import_repo_classes_inline():
+    """A workflow that reimplements a shipped check will drift from it.
+
+    CLAUDE.md §17: one implementation, invoked from both CI and the offline
+    suite. This repo shipped with `tests.yml` carrying an inline copy of
+    the sample-output check that did `from output_writer import Business` —
+    the DONOR repo's row class. Renaming the class fixed `ci_checks.py` and
+    left the workflow, which nothing runs locally, so it failed on the
+    repository's very first push, with the repo already public.
+
+    The narrow, testable rule: a workflow may CALL the repo's modules, but
+    it must not import their names into an inline script. Any check that
+    needs the schema belongs in ci_checks.py, where the offline suite runs
+    it too.
+    """
+    path = os.path.join(HERE, ".github", "workflows", "tests.yml")
+    if not os.path.isdir(os.path.join(HERE, ".github")):
+        # Triggered by the whole directory being absent, never by one file
+        # inside it going missing (§22).
+        return skip("workflow", "no .github directory (the Docker image)")
+    if not os.path.exists(path):
+        return check(False, "tests.yml is missing")
+    text = open(path, encoding="utf-8").read()
+
+    for module in ("output_writer", "product_parser", "page_flow",
+                   "weibo_api", "proxy_pool"):
+        check(f"from {module} import" not in text,
+              f"tests.yml imports from {module} in an inline script — that "
+              "check belongs in ci_checks.py, which the offline suite also "
+              "runs, or the two drift and only CI finds out")
+
+    check("ci_checks.py" in text,
+          "tests.yml calls the shipped check rather than reimplementing it")
+
+
 def test_capture_directories_cannot_reach_a_commit():
     """Both halves of the .gitignore rule, run through git itself.
 
