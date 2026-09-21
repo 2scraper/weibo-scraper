@@ -3,43 +3,43 @@
 weibo-scraper — 2captcha Scraper API edition (fourth engine)
 ============================================================
 
-A fourth way to run this scraper. Unlike the three browser engines, this
-one manages **no browser and no CDP session of its own**: it POSTs a URL to
-2captcha's separate **Scraper API** (https://scraper.2captcha.com — a
-different product from the Scraping Browser API the other three reach
-through --cdp-endpoint), gets the response back over plain HTTPS, and feeds
-it to this project's parser.
+A fourth way to run this scraper, which on Weibo **does not reach the data**
+— measured, not assumed. Read this before spending anything on it.
 
-Why you would want it: no Chromium to install, no CDP plumbing, runs from a
-tiny container or a lambda.
+What was measured, 2026-09-21, with a live key
+-----------------------------------------------
+The Scraper API works perfectly well from here, and the bill proves the
+call happened:
 
-WHAT IS MEASURED HERE, AND WHAT IS NOT — READ THIS FIRST
----------------------------------------------------------
-Two things were measured on 2026-09-21, from a datacenter address in
-Finland, and they pull in opposite directions:
+    https://weibo.com/                 upstream 200, 3,444 bytes, $0.0005
+    an /ajax/ feed URL                 upstream 403,    21 bytes, $0.0005
+    the same, + X-Requested-With and
+      a Referer in `headers`           upstream 403,    21 bytes, $0.0005
+    the same, via `requestHeaders`     upstream 403,    21 bytes, $0.0005
 
-  a PLAIN HTTPS GET of an /ajax/ URL, carrying a visitor cookie and the
-  `X-Requested-With: XMLHttpRequest` header, returns the payload. 100
-  requests in 83 seconds, zero refusals. That is `weibo_api.WeiboClient`,
-  and it needs no key, no proxy and no browser at all.
+The 21 bytes are `{"error":"Forbidden"}` — the identical signature a browser
+`page.goto()` gets. Weibo declines a top-level NAVIGATION to its own API and
+serves the identical request made as an XHR, and this product fetches by
+navigation. Custom headers did not change it.
 
-  a browser NAVIGATION to the very same URL returns `403
-  {"error":"Forbidden"}` — 21 bytes. Weibo declines a top-level navigation
-  to its own API and serves the identical request made as an XHR.
+That is a statement about how this fetch arrives, not about the product:
+2captcha's Scraper API fetches the page it was asked for, and other repos in
+this family use it successfully. On THESE URLs, on THIS site, it arrives in
+the shape Weibo refuses.
 
-Whether THIS path works therefore depends on something not measured here:
-whether the Scraper API issues its fetch as an ordinary GET with the
-headers below (in which case it works) or as a page navigation (in which
-case Weibo answers the 403 above). **No 2captcha key was available while
-this repo was written, so this engine is UNVERIFIED.** That is a statement
-about what was tested, not about the product — the other engines in this
-family use the Scraper API successfully, and nothing here suggests it
-cannot do this.
+What to use instead
+-------------------
+Nothing, in the sense that costs money. The same payloads come back over
+plain HTTPS from an ordinary datacenter address, with a free visitor cookie
+and no browser at all — 100 requests in 83 seconds, zero refusals. That is
+`weibo_api.WeiboClient`, and `playwright_scraper.py` drives the same route
+through a browser when you want one.
 
-What can be said without a key is the part that matters most to a reader:
-**you almost certainly do not need this path on Weibo.** The data is free
-over plain HTTPS from an ordinary address. If you run this engine and it
-works, please say so in an issue and this paragraph gets a measurement.
+This file is kept rather than deleted so the measurement above has somewhere
+to live, and so that a future change on either side (Weibo relaxing the
+check, or the API growing an XHR-shaped fetch mode) has a client ready to
+test it with. If you find a payload that works, please open an issue and
+this docstring gets a better measurement.
 
 Usage
 -----
@@ -222,6 +222,20 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
     # Same policy as the browser engines: the status decides the blocked
     # case, because this site's refusal has no marker to detect.
     state = detect_page_state(html, status=upstream_status, url=args.url)
+    if state == "bad_request":
+        logger.error(
+            "Weibo answered HTTP %s with %d bytes — this is the measured "
+            "outcome for an /ajax/ URL fetched through this product: it "
+            "arrives as a page NAVIGATION, which Weibo refuses, while the "
+            "identical request made as an XHR is served. It is not a block, "
+            "not a rate limit and not geography.",
+            upstream_status, len(html))
+        logger.error(
+            "Use playwright_scraper.py, or weibo_api.WeiboClient for a "
+            "browserless read — both fetch these URLs successfully with a "
+            "free visitor cookie and no key.")
+        return EXIT_API_ERROR
+
     if state == "blocked":
         dump = f"{args.out}_scraperapi_debug.html"
         with open(dump, "w", encoding="utf-8") as f:
@@ -325,9 +339,16 @@ def parse_args():
         "WEIBO_CDP_ENDPOINT": "cdp_url",
         "WEIBO_URL": "url",
     })
+    if not args.url and args.mode == "hot":
+        # The hot feed has ONE address and no per-account part, so asking a
+        # user to type it is asking them to copy a constant. The three
+        # browser engines build it themselves for the same reason; this one
+        # differing was a usability gap, not a design choice.
+        args.url = P.hot_feed_url(count=25)
     if not args.url:
-        p.error("no --url given, and WEIBO_URL is not set in the environment "
-                "or in .env.")
+        p.error(f"--mode {args.mode} needs --url (an account or post URL), "
+                "and WEIBO_URL is not set in the environment or in .env. "
+                "Only --mode hot has a fixed address.")
     return args
 
 

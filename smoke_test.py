@@ -598,8 +598,18 @@ BAD_REQUEST = FIXTURES["bad_request"]
 SERVED_HTML = "<!doctype html>\n<html lang=\"zh-cn\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <link rel=\"dns-prefetch\" href=\"//h5.sinaimg.cn\" />\n    <meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover\" />\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n    <meta http-equiv=\"Content-Security-Policy\" content=\"upgrade-insecure-requests\" />\n    <meta content=\"\" name=\"keywords\" />\n    <meta content=\"\" name=\"description\" />\n    <link rel=\"icon\" href=\"https://weibo.com/favicon.ico\" />\n    <link\n      rel=\"stylesheet\"\n      type=\"text/css\"\n      href=\"//h5.sinaimg.cn/m/reward-pc-kits/style.css?version=2.1.5\"\n    />\n    <script src=\"https://js.t.sinajs.cn/static/validate-loader.umd.cjs\"></script>\n    <title>微博</title>\n    <script>\n      if (window.location.protocol !== 'https:') {\n        window.location.href = window.location.href.replace('http:', 'https:');\n      }\n    </script>\n    <script type=\"module\" crossorigin src=\"https://h5.sinaimg.cn/m/weibo-pro-next/assets/index-DArm_q-5.js\"></script>\n    <link rel=\"stylesheet\" crossorigin href=\"https://h5.sinaimg.cn/m/weibo-pro-next/assets/index-BQia-I5S.css\">\n  </head>\n  <body>\n    <script>\n      function scriptLoaded() {\n        if (window.wbBotDetector) {\n          window.wbBotDetector.load({\n            from: 'weibo_pc',\n            isTraceMouse: true,\n            isTraceKeyboard: true,\n            getTimeout: 2000\n          });\n        }\n      }\n    </script>\n    <script\n      src=\"https://passport.sinaimg.cn/js/fp/1.3.2.umd.js\"\n      defer=\"defer\"\n      onload=\"scriptLoaded()\"\n    ></script>\n    <script>\n      try {\n        var CAPTCHA_TYPE = 'yidun';\n        window.CAPTCHA_TYPE = CAPTCHA_TYPE;\n        var dynamicLoader = window.ValidateLoader.dynamicLoader;\n        dynamicLoader\n          .load(CAPTCHA_TYPE)\n          .catch((err) => console.error('Dun preload failed', err));\n      } catch (e) {\n        console.log(e);\n      }\n    </script>\n    <script>\n      window.$VERSION = {\n        CLIENT: 'v1.1.249',\n        SERVER: 'v2026.09.20.1'\n      };\n      try{window.$CONFIG = {\"serverTime\":1789979952798,\"showAriaEntrance\":true,\"enableAria\":true,\"enablePopLogin\":true,\"apmSampleRate\":0.01,\"isNormal\":false,\"flags\":{\"PC_grey\":false,\"trend\":0},\"loginHeader\":{\"poster\":\"https://a.sinaimg.cn/mintra/pic/2112130400/18weibo_login.png\",\"src\":\"https://a.sinaimg.cn/mintra/pic/2112130543/weibo_login.mp4\"}};}catch(e){window.$CONFIG = {};}\n      const s = document.createElement('script');\n      s.src = 'https://i.sso.sina.com.cn/js/qrcode_login_v2.js';\n      document.body.appendChild(s);\n    </script>\n    <div id=\"app\"></div>\n    <script defer src=\"https://static.geetest.com/v4/gt4.js\"></script>\n    <script>\n      try {\n        if (window.$CONFIG.enableAria) {\n          const s = document.createElement('script');\n          s.defer = true;\n          s.src = '//a.sinaimg.cn/mintra/pic/2201111119/wza/aria.js?appid=scrubbed_appid_not_a_credential';\n          document.body.appendChild(s);\n        }\n      } catch (e) {}\n      try {\n        const s = document.createElement('script');\n        s.defer = true;\n        s.src = '//a.sinaimg.cn/mintra/pic/2406250331/48po.js';\n        document.body.appendChild(s);\n      } catch (e) {}\n    </script>\n    <script\n      src=\"//h5.sinaimg.cn/m/reward-pc-kits/sdk.js?version=2.1.5\"\n      defer\n    ></script>\n    <!-- built files will be auto injected  -->\n  </body>\n</html>\n"
 
 ENGINES = ("playwright_scraper", "puppeteer_scraper", "selenium_scraper")
+# Every shared module an engine may call into. `fingerprint_client` and
+# `captcha_solver` were missing from this tuple, and the binding check is
+# only as wide as this list: the engine called a function named
+# `fetch_fingerprint` that fingerprint_client has never defined (it is
+# `get_fingerprint`), and nothing caught it until a real key arrived and the
+# paid path ran for the first time. That is CLAUDE.md §16 — the credential
+# -gated paths are the ones nobody ran — and §22: when a check resolves
+# something before testing it, ask what it does when the resolution never
+# happens at all.
 SHARED_MODULES = ("page_flow", "product_parser", "weibo_api", "output_writer",
-                  "proxy_pool", "env_config")
+                  "proxy_pool", "env_config", "fingerprint_client",
+                  "captcha_solver")
 
 
 # ---------------------------------------------------------------------------
@@ -1174,6 +1184,60 @@ def test_flag_parity():
     eq(base, CONTRACT_FLAGS, "the engines declare exactly the contract's flags")
 
 
+def test_flag_choices_satisfy_the_shared_modules():
+    """Every value a flag OFFERS must be one the callee accepts.
+
+    CLAUDE.md §17 states the rule — "when a shared module documents a
+    constraint, grep the callers for values that violate it" — and this
+    repo broke it twice before the check existed:
+
+      * `--proxy-rotate` offered `per-page`, `per-run` and `on-block` and
+        DEFAULTED to `on-block`, while `proxy_pool.ROTATE_MODES` is
+        `("per-run", "per-page")`. Every run that passed a proxy died on
+        `ProxyError` before fetching anything. Unreachable without a proxy,
+        so 5,600 offline checks and three live runs never touched it.
+      * `--fp-tags` is the same shape of defect one module over, and the
+        family already paid for it once (§17).
+
+    The engines now read the constant instead of restating it, which is
+    what this asserts.
+    """
+    import proxy_pool
+    for name in ENGINES:
+        tree = ast.parse(open(os.path.join(HERE, f"{name}.py"),
+                              encoding="utf-8").read())
+        fn = next((n for n in tree.body
+                   if isinstance(n, ast.FunctionDef) and n.name == "parse_args"), None)
+        if fn is None:
+            continue
+        for n in ast.walk(fn):
+            if not (isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "add_argument"):
+                continue
+            flag = next((a.value for a in n.args
+                         if isinstance(a, ast.Constant)
+                         and str(a.value).startswith("--")), None)
+            if flag != "--proxy-rotate":
+                continue
+            choices = next((k.value for k in n.keywords if k.arg == "choices"), None)
+            default = next((k.value for k in n.keywords if k.arg == "default"), None)
+            # Literal choices are the defect; reading the constant is the fix.
+            if isinstance(choices, (ast.List, ast.Tuple)):
+                literal = [e.value for e in choices.elts
+                           if isinstance(e, ast.Constant)]
+                for value in literal:
+                    check(value in proxy_pool.ROTATE_MODES,
+                          f"{name}: --proxy-rotate offers {value!r}, which "
+                          f"proxy_pool.ROTATE_MODES does not accept "
+                          f"{proxy_pool.ROTATE_MODES}")
+            if isinstance(default, ast.Constant) and default.value is not None:
+                check(default.value in proxy_pool.ROTATE_MODES,
+                      f"{name}: --proxy-rotate DEFAULTS to "
+                      f"{default.value!r}, which proxy_pool rejects — every "
+                      "run with a proxy would raise before fetching")
+
+
 def test_removed_flags_stay_removed():
     """Scoped to the ENGINES (CLAUDE.md §10).
 
@@ -1279,12 +1343,51 @@ def test_shared_calls_bind_against_real_signatures():
                 continue
             target = None
             if isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name):
-                mod = n.func.value.id
-                if mod in shadowed or mod not in modules:
+                owner = n.func.value.id
+                if owner in modules and owner not in shadowed:
+                    if modules[owner].split(".")[0] not in SHARED_MODULES:
+                        continue
+                    target = (modules[owner], n.func.attr)
+                elif owner in direct:
+                    # An attribute call on a from-imported CLASS, such as
+                    # `ProxyPool.from_args(args)`. This branch did not exist,
+                    # and its absence let four wrong calls into proxy_pool
+                    # ship: `from_args` is a module function rather than a
+                    # classmethod, `next` and `mark_failed` have never
+                    # existed. Every one of them crashed on the first line
+                    # that reached it, and none was reachable until a proxy
+                    # or a CDP endpoint was passed — CLAUDE.md §16 again.
+                    mod_name, attr_name = direct[owner]
+                    if mod_name.split(".")[0] not in SHARED_MODULES:
+                        continue
+                    module = importlib.import_module(mod_name)
+                    cls = getattr(module, attr_name, None)
+                    if cls is None:
+                        continue
+                    member = getattr(cls, n.func.attr, None)
+                    if not check(member is not None,
+                                 f"{name}:{n.lineno} calls "
+                                 f"{attr_name}.{n.func.attr}, which "
+                                 f"{attr_name} does not define"):
+                        continue
+                    if callable(member):
+                        try:
+                            sig = inspect.signature(member)
+                            args_n = len(n.args)
+                            # An unbound method called on the class still
+                            # needs `self`; one called on an instance does
+                            # not. Only the class form reaches this branch.
+                            sig.bind(*[object()] * args_n,
+                                     **{k.arg: object() for k in n.keywords if k.arg})
+                            bound_total += 1
+                        except TypeError as exc:
+                            check(False,
+                                  f"{name}:{n.lineno} {attr_name}."
+                                  f"{n.func.attr}(...) does not match the "
+                                  f"real signature: {exc}")
                     continue
-                if modules[mod].split(".")[0] not in SHARED_MODULES:
+                else:
                     continue
-                target = (modules[mod], n.func.attr)
             elif isinstance(n.func, ast.Name) and n.func.id in direct:
                 mod, attr = direct[n.func.id]
                 if mod.split(".")[0] not in SHARED_MODULES:
@@ -1316,6 +1419,84 @@ def test_shared_calls_bind_against_real_signatures():
     # A binding check that binds nothing passes for the wrong reason (§22).
     check(bound_total > 30,
           f"the binding check actually scanned something ({bound_total} calls)")
+
+
+def test_annotated_parameters_are_called_correctly():
+    """Every method called on a parameter ANNOTATED with a shared class.
+
+    A narrow complement to the binding check above, and it exists because
+    that check cannot see this case by design: `pool` is a local name, and
+    the rule that a name bound in the calling file shadows a same-named
+    module is what keeps the binding check from reporting twenty-one false
+    positives (CLAUDE.md §22). So `pool.next()` and `pool.mark_failed(...)`
+    sailed through it — two calls that ProxyPool has never defined, both
+    unreachable until a proxy or a CDP endpoint was passed, and both
+    crashing the run when it finally was.
+
+    No type inference: this reads the ANNOTATION the engines already
+    declare (`pool: Optional[ProxyPool]`) and checks the attribute exists.
+    """
+    import importlib
+    checked = 0
+    for name in ENGINES:
+        tree = ast.parse(open(os.path.join(HERE, f"{name}.py"),
+                              encoding="utf-8").read())
+        # parameter name -> class object, from the annotations
+        typed = {}
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for arg in list(fn.args.args) + list(fn.args.kwonlyargs):
+                ann = arg.annotation
+                if ann is None:
+                    continue
+                text = ast.unparse(ann).strip()
+                # Unwrap Optional[...] / Union[..., None], then require what
+                # is left to be a BARE name.
+                #
+                # Both halves were wrong once, in opposite directions. Taking
+                # the first capitalised name read `Optional` out of
+                # `Optional[ProxyPool]` and never reached the class, which
+                # turned the check off while it reported green. Taking every
+                # capitalised name then read `Post` out of `List[Post]` and
+                # complained that a Post does not define `.extend()` — the
+                # parameter holds a LIST of them. A container annotation
+                # says nothing about what methods the NAME supports, so it
+                # is skipped.
+                m = re.match(r"^Optional\[(.+)\]$", text)
+                if m:
+                    text = m.group(1).strip()
+                m = re.match(r"^Union\[(.+?),\s*None\]$", text)
+                if m:
+                    text = m.group(1).strip()
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", text):
+                    continue
+                cls_name = text
+                for mod in SHARED_MODULES:
+                    module = importlib.import_module(mod)
+                    cls = getattr(module, cls_name, None)
+                    # DEFINED in that module, not merely reachable through
+                    # it: every shared module does `from typing import Any`,
+                    # and in current Python `typing.Any` is itself a class,
+                    # so a bare `Any` annotation resolved to it and this
+                    # check reported that Any does not define `.strip()`.
+                    if (isinstance(cls, type)
+                            and getattr(cls, "__module__", None) == mod):
+                        typed[arg.arg] = (cls_name, cls)
+                        break
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and isinstance(n.func.value, ast.Name)
+                    and n.func.value.id in typed):
+                cls_name, cls = typed[n.func.value.id]
+                checked += 1
+                check(hasattr(cls, n.func.attr),
+                      f"{name}:{n.lineno} calls .{n.func.attr}() on a "
+                      f"{cls_name} parameter, and {cls_name} does not "
+                      "define it")
+    check(checked > 0,
+          "the annotated-parameter check scanned something — a check that "
+          "inspects nothing passes for the wrong reason")
 
 
 def test_no_undefined_names():
@@ -1785,14 +1966,33 @@ def test_selenium_states_what_it_cannot_do():
           "and says plainly that proxy credentials do not work here")
 
 
-def test_no_javascript_in_the_shared_modules():
+# The modules the no-JavaScript rule applies to. NOT the same list as
+# SHARED_MODULES, and the difference is the rule's actual subject.
+#
+# CLAUDE.md §1 is about the modules that sit BETWEEN the engines as policy
+# and pure algorithms: a JS snippet there quietly acquires one driver's
+# dialect, because Selenium's `execute_script` takes a function BODY with an
+# explicit `return` while the other two take `() => expr`.
+#
+# `captcha_solver` and `fingerprint_client` are a different kind of module.
+# Carrying browser-side payloads IS their job — a widget-discovery snippet,
+# a token injector, a fingerprint init script — and they publish those as
+# named constants for each engine to spell in its own dialect, which is the
+# rule being followed rather than broken. Widening SHARED_MODULES pulled
+# them into this check and produced three failures that were the check's
+# fault, not the code's.
+POLICY_MODULES = ("page_flow", "product_parser", "output_writer",
+                  "proxy_pool", "env_config", "weibo_api")
+
+
+def test_no_javascript_in_the_policy_modules():
     """CLAUDE.md §1: let NO JavaScript cross that boundary.
 
     Selenium's `execute_script` takes a function BODY with an explicit
     `return` while Playwright and pyppeteer take `() => expr`, so a shared
     snippet quietly acquires one driver's dialect.
     """
-    for name in SHARED_MODULES:
+    for name in POLICY_MODULES:
         path = os.path.join(HERE, f"{name}.py")
         if not os.path.exists(path):
             continue

@@ -65,6 +65,7 @@ import product_parser as P
 import weibo_api as W
 from output_writer import (EXIT_API_ERROR, EXIT_NO_PRODUCTS, Post,
                            dedupe_by_key, finish_run)
+import proxy_pool
 from proxy_pool import ProxyPool
 
 log = logging.getLogger("weibo.puppeteer")
@@ -144,24 +145,6 @@ def _proxy_failure(exc: Exception) -> str:
     return ""
 
 
-def _split_proxy(proxy_url: Optional[str]) -> Tuple[Optional[str], Optional[str],
-                                                    Optional[str]]:
-    """`(server, username, password)`.
-
-    Credentials are kept OUT of the server string, which becomes part of
-    the browser's command line and is readable by anything that can run
-    `ps` (§8). pyppeteer authenticates through `page.authenticate`.
-    """
-    if not proxy_url:
-        return None, None, None
-    m = re.match(r"^(?P<scheme>\w+)://(?:(?P<user>[^:@/]+):(?P<pw>[^@/]*)@)?"
-                 r"(?P<host>[^/@]+)/?$", proxy_url.strip())
-    if not m:
-        return proxy_url, None, None
-    return (f"{m.group('scheme')}://{m.group('host')}",
-            m.group("user"), m.group("pw"))
-
-
 class _BrowserSession:
     """One browser, one page, one exit — async, because pyppeteer is.
 
@@ -191,7 +174,10 @@ class _BrowserSession:
                     f"{_mask(exc)}") from None
             self.page = await self.browser.newPage()
         else:
-            server, user, pw = _split_proxy(self.proxy_url)
+            # The shared module already splits this correctly,
+            # keeping credentials out of the launch args (§16).
+            server, creds = proxy_pool.split_credentials(self.proxy_url)
+            user, pw = creds if creds else (None, None)
             launch_args = ["--no-sandbox", "--disable-dev-shm-usage"]
             if server:
                 launch_args.append(f"--proxy-server={server}")
@@ -212,6 +198,21 @@ class _BrowserSession:
         self.page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS)
         await self._install_visitor_cookies()
         await self._land()
+
+
+    async def rotate_to(self, proxy_url):
+        """Tear this session down and build another on a different exit.
+
+        A rotation is a FRESH BROWSER, not a swapped proxy (CLAUDE.md §8):
+        cookies a bot manager issued against exit A and replayed from exit B
+        are a stronger signal than either address alone. So the visitor
+        cookie is re-minted through the new exit too, rather than carried
+        across.
+        """
+        log.info("[i] rotating to a new exit and rebuilding the browser")
+        await self.close()
+        self.proxy_url = proxy_url
+        await self.open()
 
     async def _install_visitor_cookies(self) -> None:
         """Mint a visitor cookie over HTTP and hand it to the browser.
@@ -274,48 +275,101 @@ async def _api_get(session: _BrowserSession, url: str) -> Tuple[Optional[int], s
 
 async def handle_captcha_if_present(page, args,
                                     budget: page_flow.SolveBudget) -> bool:
-    """Solve a challenge if one is present and the budget allows.
+    """Detect a challenge, solve it once, and inject the token.
+
+    Written against captcha_solver's REAL API. The first version called a
+    `solve_on_page` helper that the module has never defined — in all three
+    engines, invisible to import, `--help`, `compileall` and 4,900 green
+    offline checks, and it would have raised AttributeError at the exact
+    moment a challenge first appeared. It surfaced only once a real API key
+    arrived and the suite's signature-binding check was widened to cover
+    this module (CLAUDE.md §16: the credential-gated paths are the ones
+    nobody ran).
 
     `budget` is NOT optional and is shared with the other call site in the
-    same attempt — CLAUDE.md §23: this function is called twice per attempt
-    in every engine of this family and only the second call was ever
-    counted, so `SOLVES_PER_PAGE = 1` enforced nothing. The suite counts
-    call sites, guards and increments and asserts the three are equal.
+    same attempt. §23: every engine in this family calls this twice per
+    attempt and only the second call was ever counted, so
+    `SOLVES_PER_PAGE = 1` enforced nothing.
+
+    Expected never to fire on Weibo: no challenge was rendered on any route
+    this repo reads. It is here because Weibo has two captcha vendors wired
+    into its own page chrome, so one appearing later is a change in the
+    site rather than an impossibility (§19).
     """
     if args.solve_captcha == "never":
         return False
     if not budget.may_solve():
-        log.info("[i] solve budget for this page is spent (%r)", budget)
+        log.info("[i] solve budget for this page is spent (%r) — not "
+                 "paying twice for the same page", budget)
         return False
+
+    page_url = ""
+    try:
+        page_url = page.url or ""
+    except Exception:  # noqa: BLE001
+        pass
     try:
         html = await page.content()
     except Exception:  # noqa: BLE001
         return False
+
     marker = P.detect_bot_challenge(html)
-    if not marker:
-        return False
-    if marker not in P.CHALLENGE_MARKERS:
+    if marker and marker not in P.CHALLENGE_MARKERS:
+        # A login wall is not a challenge. Nothing is being tested, access
+        # is being declined, and paying for a request the API will reject
+        # is worse than reporting the page unsolved (CLAUDE.md §19).
         log.info("[i] %r is a login wall, not a challenge — no solve "
                  "attempted (this repo does not implement account login)",
                  marker)
         return False
-    if not args.twocaptcha_key:
-        log.warning("[!] a challenge (%s) is present and no --twocaptcha-key "
-                    "was given — continuing unsolved", marker)
-        return False
+
+    import captcha_solver as CS
+
+    # BOTH detectors, then reconcile — never short-circuit on the first
+    # (CLAUDE.md §8). They can disagree about the same page, and the live
+    # one sees a widget the markup only hints at.
+    static_hit = CS.detect_recaptcha_v3(html, page_url)
+    runtime_hit = None
     try:
-        import captcha_solver
+        discovered = await page.evaluate(CS.RECAPTCHA_DISCOVERY_JS)
+        runtime_hit = CS.detect_recaptcha_in_page(lambda _js: discovered,
+                                                  page_url)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("live captcha discovery failed: %s", _mask(exc)[:120])
+    challenge = CS.reconcile_detections(static_hit, runtime_hit)
+    if challenge is None:
+        return False
+
+    log.info("[i] challenge detected: kind=%s size=%s source=%s",
+             challenge.kind, challenge.size, challenge.source)
+    if not args.twocaptcha_key:
+        log.warning("[!] a challenge is on the page and no --twocaptcha-key "
+                    "was given — continuing unsolved")
+        return False
+
+    try:
         budget.charge()
-        solved = captcha_solver.solve_on_page(
-            page, api_key=args.twocaptcha_key, api_kind=args.captcha_api,
-            min_score=args.min_score)
+        token = CS.solve_recaptcha(challenge, args.twocaptcha_key,
+                                   api_version=args.captcha_api,
+                                   min_score=args.min_score)
+    except CS.CaptchaUnsolvable as exc:
+        log.warning("[!] 2captcha could not solve it: %s", _mask(exc))
+        return False
     except Exception as exc:  # noqa: BLE001
         log.warning("[!] captcha solve failed: %s — continuing", _mask(exc))
         return False
-    if solved:
-        log.info("[+] challenge solved")
-    return bool(solved)
 
+    if not token:
+        return False
+    try:
+        await page.evaluate(CS.INJECT_TOKEN_JS, token)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[!] the token was bought but could not be injected: %s",
+                    _mask(exc))
+        return False
+    log.info("[+] challenge solved and the token injected (%d chars)",
+             len(token))
+    return True
 
 def _snapshot(body: str, url: str, args, page_num: int, state: str) -> None:
     """Write the exact bytes this run saw, on success too (§9)."""
@@ -400,8 +454,13 @@ async def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 last_error = f"proxy: {which}"
                 log.warning("[!] page %d attempt %d: the exit failed (%s)",
                             page_num, attempt, which)
-                if pool:
-                    pool.mark_failed(session.proxy_url)
+                if pool and len(pool) > 1:
+                    # A rotation is a FRESH BROWSER (CLAUDE.md §8): cookies
+                    # a bot manager issued against exit A and replayed from
+                    # exit B are a stronger signal than either address
+                    # alone, so the session is torn down and rebuilt rather
+                    # than having the proxy swapped under it.
+                    await session.rotate_to(pool.advance("proxy failure"))
             else:
                 last_error = f"browser: {_mask(exc)[:160]}"
                 log.warning("[!] page %d attempt %d: %s", page_num, attempt,
@@ -498,9 +557,26 @@ async def _resolve_mid(session: _BrowserSession, mblogid: str) -> Optional[str]:
 
 
 async def _scrape_async(args) -> int:
+    # Checked FIRST, before a pool is built. It used to sit after
+    # proxy_pool.from_args, so a run that passed both flags crashed
+    # on the way to this message instead of reading it — a refusal
+    # that exists in the source and cannot be reached is not a
+    # refusal (CLAUDE.md §17).
+    if args.cdp_endpoint and (args.proxy or args.proxy_file):
+        # Exit 2, the family's code for bad usage. A bare
+        # `raise SystemExit("...")` exits 1, which is "crash" — and a caller
+        # branching on the exit code would read a typo as a bug in here.
+        log.error(
+            "--proxy cannot be combined with --cdp-endpoint: the Scraping "
+            "Browser already exits through its own network, and stacking a "
+            "second proxy on it is a contradiction rather than better "
+            "cover. Pick the exit with the endpoint's own `country-` "
+            "segment.")
+        raise SystemExit(2)
+
     pool = None
     if args.proxy_file or args.proxy:
-        pool = ProxyPool.from_args(args)
+        pool = proxy_pool.from_args(args)
         if pool and not len(pool):
             pool = None
 
@@ -514,13 +590,6 @@ async def _scrape_async(args) -> int:
     if limit:
         args.concurrency = min(args.concurrency, limit)
 
-    if args.cdp_endpoint and (args.proxy or args.proxy_file):
-        raise SystemExit(
-            "--proxy cannot be combined with --cdp-endpoint: the Scraping "
-            "Browser already exits through its own network, and stacking a "
-            "second proxy on it is a contradiction rather than better cover. "
-            "Pick the exit with the endpoint's own `country-` segment.")
-
     rows: List[Post] = []
     seen: set = set()
     pages_completed = 0
@@ -533,7 +602,7 @@ async def _scrape_async(args) -> int:
     dedupe_key = "comment_id" if args.mode == "post" else "sku"
 
     pages = page_flow.pages_to_plan(args.pages, None)
-    proxy_url = pool.next() if pool else args.proxy
+    proxy_url = pool.current if pool else args.proxy
 
     session = _BrowserSession(args, proxy_url)
     try:
@@ -687,8 +756,19 @@ def parse_args(argv=None):
 
     p.add_argument("--proxy", default=None)
     p.add_argument("--proxy-file", default=None)
-    p.add_argument("--proxy-rotate", choices=["per-page", "per-run", "on-block"],
-                   default="on-block")
+    # The choices are taken FROM proxy_pool rather than written out here.
+    # They were written out, as ["per-page", "per-run", "on-block"] with
+    # "on-block" as the default — and proxy_pool.ROTATE_MODES has only
+    # ("per-run", "per-page"), so every run that passed a proxy died on
+    # `ProxyError: rotate must be one of ...` before fetching anything.
+    # CLAUDE.md §17: when a shared module documents a constraint, grep the
+    # callers for values that violate it. Reading the constant instead
+    # makes that impossible to get wrong again.
+    p.add_argument("--proxy-rotate", choices=list(proxy_pool.ROTATE_MODES),
+                   default="per-run",
+                   help="When to move to the next exit. Rotation on a proxy "
+                        "FAILURE happens under either mode — the engine "
+                        "calls advance() when an exit dies.")
     p.add_argument("--proxy-shuffle", action="store_true")
     p.add_argument("--proxy-block-retries", type=int,
                    default=page_flow.BLOCK_RETRIES_WITHOUT_POOL)
@@ -710,7 +790,15 @@ def parse_args(argv=None):
                         "surface; use the Playwright engine.")
     p.add_argument("--fp-country", default=None)
     p.add_argument("--fp-tags", default="Windows",
-                   help="ONE OS-family tag. The API rejects a list.")
+                   help="ONE tag, from a short closed list. Measured "
+                        "against the live API 2026-09-21: Windows, "
+                        "Microsoft Windows, Linux and Android are accepted "
+                        "(case-insensitively); EVERYTHING else tested "
+                        "answers HTTP 400 — including macOS, iOS, Mac OS X, "
+                        "Chrome OS, Ubuntu, every browser name, every "
+                        "form-factor name, and any list such as "
+                        "'Windows,Chrome,Desktop'. There is no Apple "
+                        "platform in the set.")
     p.add_argument("--locale", default=None)
 
     p.add_argument("--allow-empty", action="store_true")

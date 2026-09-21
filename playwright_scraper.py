@@ -100,6 +100,7 @@ import weibo_api as W
 import env_config
 from output_writer import (EXIT_API_ERROR, EXIT_BLOCKED, EXIT_NO_PRODUCTS,
                            Post, dedupe_by_key, finish_run)
+import proxy_pool
 from proxy_pool import ProxyPool
 
 log = logging.getLogger("weibo.playwright")
@@ -207,30 +208,6 @@ def _proxy_failure(exc: Exception) -> str:
     return ""
 
 
-def _playwright_proxy(proxy_url: Optional[str]) -> Optional[Dict[str, str]]:
-    """Split a proxy URL into Playwright's own fields.
-
-    Credentials go in `username`/`password`, NEVER into `--proxy-server=`:
-    a browser's command line is readable by anything that can run `ps`
-    (CLAUDE.md §8). Playwright authenticates over its own channel, so this
-    is the correct place for them and the URL handed to `server` is
-    credential-free.
-    """
-    if not proxy_url:
-        return None
-    m = re.match(r"^(?P<scheme>\w+)://(?:(?P<user>[^:@/]+):(?P<pw>[^@/]*)@)?"
-                 r"(?P<host>[^/@]+)/?$", proxy_url.strip())
-    if not m:
-        log.warning("[!] could not parse proxy %s — passing it through as a "
-                    "server with no credentials", _mask(proxy_url))
-        return {"server": proxy_url}
-    out = {"server": f"{m.group('scheme')}://{m.group('host')}"}
-    if m.group("user"):
-        out["username"] = m.group("user")
-        out["password"] = m.group("pw") or ""
-    return out
-
-
 # --------------------------------------------------------------------------
 # Browser session
 # --------------------------------------------------------------------------
@@ -253,6 +230,10 @@ class _BrowserSession:
         self.page = None
         self.user_agent = W.DEFAULT_UA
         self.remote = bool(args.cdp_endpoint)
+        # Kept so a rotation can rebuild: Playwright's sync API
+        # ties a browser to its creating thread, so the session
+        # must reopen through the same driver object.
+        self._pw = pw
         self._open(pw)
 
     def _open(self, pw):
@@ -272,7 +253,13 @@ class _BrowserSession:
                             else self.browser.new_context())
         else:
             launch: Dict[str, Any] = {"headless": args.headless}
-            proxy = _playwright_proxy(self.proxy_url)
+            # proxy_pool.to_playwright puts credentials in
+            # Playwright's own fields, never in `server` — which
+            # becomes a Chromium command line and is readable by
+            # anything that can run `ps` (CLAUDE.md §8). This was
+            # hand-rolled here until the shared module turned out
+            # to already do it, correctly (§16).
+            proxy = proxy_pool.to_playwright(self.proxy_url)
             if proxy:
                 launch["proxy"] = proxy
             self.browser = pw.chromium.launch(**launch)
@@ -305,38 +292,62 @@ class _BrowserSession:
                         "requests do not strictly need the page open",
                         LANDING_URL, _mask(exc)[:120])
 
+
+    def rotate_to(self, proxy_url):
+        """Tear this session down and build another on a different exit.
+
+        A rotation is a FRESH BROWSER, not a swapped proxy (CLAUDE.md §8):
+        cookies a bot manager issued against exit A and replayed from exit B
+        are a stronger signal than either address alone. So the visitor
+        cookie is re-minted through the new exit too, rather than carried
+        across.
+        """
+        log.info("[i] rotating to a new exit and rebuilding the browser")
+        self.close()
+        self.proxy_url = proxy_url
+        self._open(self._pw)
+
     def _fingerprint_kwargs(self) -> Dict[str, Any]:
         """Context kwargs from a 2Captcha fingerprint, or {}.
 
-        Every key here is checked against what `new_context` accepts before
-        it is passed: an unknown key is a `TypeError` at launch, on the
-        paid path, at runtime (CLAUDE.md §10), and the suite asserts the
-        same thing offline.
+        Delegates BOTH steps to fingerprint_client rather than reading the
+        payload here, and that is not tidiness — it is CLAUDE.md §16 with a
+        scar. The first version of this method hand-rolled the translation
+        and read `fp["timezone"]` and `fp["locale"]`, neither of which
+        exists: the API puts them in `fp["intl"]` as `timeZone` and
+        `contentLocale`. So it silently applied NO timezone and NO locale,
+        which is two of the exact four defects §16 lists as having lived for
+        months in this family — re-introduced in new code, in a repo whose
+        shared module had already fixed them.
+        `playwright_context_kwargs` is the tested path; this calls it.
+
+        Measured against the live API 2026-09-21 with `country="de"`:
+        user_agent, viewport, screen, device_scale_factor, locale `de-DE`
+        (not `en-DE`) and timezone_id `Europe/Berlin` all come back
+        populated.
+
+        Every key is one `new_context` accepts. An unknown key is a
+        TypeError at launch, on the paid path, at runtime (§10).
         """
         try:
             import fingerprint_client as FP
-            fp = FP.fetch_fingerprint(
-                api_key=self.args.twocaptcha_key,
-                country=self.args.fp_country,
-                tags=self.args.fp_tags)
+            fp = FP.get_fingerprint(
+                self.args.twocaptcha_key,
+                tags=self.args.fp_tags,
+                country=self.args.fp_country)
         except Exception as exc:  # noqa: BLE001
             # A fingerprint failure is a WARNING, never the end of a run:
             # the run's job is data, and it can still get it (§8).
             log.warning("[!] --fingerprint: %s — continuing with the "
                         "browser's own identity", _mask(exc))
             return {}
-        out: Dict[str, Any] = {}
-        ua = (fp or {}).get("userAgent")
-        if isinstance(ua, dict):
-            ua = ua.get("value")
+        kwargs = FP.playwright_context_kwargs(fp)
+        ua = kwargs.get("user_agent")
         if ua:
-            out["user_agent"] = ua
             self.user_agent = ua
-        if (fp or {}).get("timezone"):
-            out["timezone_id"] = fp["timezone"]
-        if (fp or {}).get("locale"):
-            out["locale"] = fp["locale"]
-        return out
+        log.info("[+] fingerprint %s (%s) applied: %s",
+                 fp.get("id"), fp.get("country"), ", ".join(sorted(kwargs)))
+        return kwargs
 
     def _install_visitor_cookies(self) -> None:
         """Mint a visitor cookie over HTTP and hand it to the browser.
@@ -402,18 +413,26 @@ def _body_text(page) -> str:
 
 
 def handle_captcha_if_present(page, args, budget: page_flow.SolveBudget) -> bool:
-    """Solve a challenge if one is on the page and the budget allows.
+    """Detect a challenge, solve it once, and inject the token.
 
-    `budget` is NOT optional and is shared with the other call site in this
-    same attempt. CLAUDE.md §23: every engine in this family calls this
-    function TWICE per attempt — once before the response is classified and
-    once after — and only the second call was ever counted, so `SOLVES_PER_PAGE
-    = 1` was a constant that enforced nothing and one page could buy three
-    solves. Passing one budget object through both call sites is what makes
-    the number true. The suite counts call sites, guards and increments and
-    asserts the three are equal.
+    Written against captcha_solver's REAL API. The first version called a
+    `solve_on_page` helper that the module has never defined — in all three
+    engines, invisible to import, `--help`, `compileall` and 4,900 green
+    offline checks, and it would have raised AttributeError at the exact
+    moment a challenge first appeared. It surfaced only once a real API key
+    arrived and the suite's signature-binding check was widened to cover
+    this module (CLAUDE.md §16: the credential-gated paths are the ones
+    nobody ran).
 
-    A missing key or a solver error is a WARNING and the run continues (§8).
+    `budget` is NOT optional and is shared with the other call site in the
+    same attempt. §23: every engine in this family calls this twice per
+    attempt and only the second call was ever counted, so
+    `SOLVES_PER_PAGE = 1` enforced nothing.
+
+    Expected never to fire on Weibo: no challenge was rendered on any route
+    this repo reads. It is here because Weibo has two captcha vendors wired
+    into its own page chrome, so one appearing later is a change in the
+    site rather than an impossibility (§19).
     """
     if args.solve_captcha == "never":
         return False
@@ -422,39 +441,73 @@ def handle_captcha_if_present(page, args, budget: page_flow.SolveBudget) -> bool
                  "paying twice for the same page", budget)
         return False
 
+    page_url = ""
+    try:
+        page_url = page.url or ""
+    except Exception:  # noqa: BLE001
+        pass
     try:
         html = _body_text(page)
     except Exception:  # noqa: BLE001
         return False
+
     marker = P.detect_bot_challenge(html)
-    if not marker:
-        return False
-    if marker not in P.CHALLENGE_MARKERS:
-        # A login wall is not a challenge. There is nothing to solve and
-        # paying for a request the API will reject is worse than reporting
-        # the page unsolved (§19).
+    if marker and marker not in P.CHALLENGE_MARKERS:
+        # A login wall is not a challenge. Nothing is being tested, access
+        # is being declined, and paying for a request the API will reject
+        # is worse than reporting the page unsolved (CLAUDE.md §19).
         log.info("[i] %r is a login wall, not a challenge — no solve "
                  "attempted (this repo does not implement account login)",
                  marker)
         return False
+
+    import captcha_solver as CS
+
+    # BOTH detectors, then reconcile — never short-circuit on the first
+    # (CLAUDE.md §8). They can disagree about the same page, and the live
+    # one sees a widget the markup only hints at.
+    static_hit = CS.detect_recaptcha_v3(html, page_url)
+    runtime_hit = None
+    try:
+        discovered = page.evaluate(CS.RECAPTCHA_DISCOVERY_JS)
+        runtime_hit = CS.detect_recaptcha_in_page(lambda _js: discovered,
+                                                  page_url)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("live captcha discovery failed: %s", _mask(exc)[:120])
+    challenge = CS.reconcile_detections(static_hit, runtime_hit)
+    if challenge is None:
+        return False
+
+    log.info("[i] challenge detected: kind=%s size=%s source=%s",
+             challenge.kind, challenge.size, challenge.source)
     if not args.twocaptcha_key:
-        log.warning("[!] a challenge (%s) is on the page and no --twocaptcha-key "
-                    "was given — continuing unsolved", marker)
+        log.warning("[!] a challenge is on the page and no --twocaptcha-key "
+                    "was given — continuing unsolved")
         return False
 
     try:
-        import captcha_solver
         budget.charge()
-        solved = captcha_solver.solve_on_page(
-            page, api_key=args.twocaptcha_key, api_kind=args.captcha_api,
-            min_score=args.min_score)
+        token = CS.solve_recaptcha(challenge, args.twocaptcha_key,
+                                   api_version=args.captcha_api,
+                                   min_score=args.min_score)
+    except CS.CaptchaUnsolvable as exc:
+        log.warning("[!] 2captcha could not solve it: %s", _mask(exc))
+        return False
     except Exception as exc:  # noqa: BLE001
         log.warning("[!] captcha solve failed: %s — continuing", _mask(exc))
         return False
-    if solved:
-        log.info("[+] challenge solved")
-    return bool(solved)
 
+    if not token:
+        return False
+    try:
+        page.evaluate(CS.INJECT_TOKEN_JS, token)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[!] the token was bought but could not be injected: %s",
+                    _mask(exc))
+        return False
+    log.info("[+] challenge solved and the token injected (%d chars)",
+             len(token))
+    return True
 
 def _snapshot(body: str, url: str, args, page_num: int, state: str) -> None:
     """Write the exact bytes this run saw, on success too.
@@ -578,8 +631,13 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 last_error = f"proxy: {which}"
                 log.warning("[!] page %d attempt %d: the exit failed (%s)",
                             page_num, attempt, which)
-                if pool:
-                    pool.mark_failed(session.proxy_url)
+                if pool and len(pool) > 1:
+                    # A rotation is a FRESH BROWSER (CLAUDE.md §8): cookies
+                    # a bot manager issued against exit A and replayed from
+                    # exit B are a stronger signal than either address
+                    # alone, so the session is torn down and rebuilt rather
+                    # than having the proxy swapped under it.
+                    session.rotate_to(pool.advance("proxy failure"))
             else:
                 last_error = f"browser: {_mask(exc)[:160]}"
                 log.warning("[!] page %d attempt %d: %s", page_num, attempt,
@@ -695,9 +753,26 @@ def _resolve_mid(session: _BrowserSession, mblogid: str) -> Optional[str]:
 
 
 def scrape(args) -> int:
+    # Checked FIRST, before a pool is built. It used to sit after
+    # proxy_pool.from_args, so a run that passed both flags crashed
+    # on the way to this message instead of reading it — a refusal
+    # that exists in the source and cannot be reached is not a
+    # refusal (CLAUDE.md §17).
+    if args.cdp_endpoint and (args.proxy or args.proxy_file):
+        # Exit 2, the family's code for bad usage. A bare
+        # `raise SystemExit("...")` exits 1, which is "crash" — and a caller
+        # branching on the exit code would read a typo as a bug in here.
+        log.error(
+            "--proxy cannot be combined with --cdp-endpoint: the Scraping "
+            "Browser already exits through its own network, and stacking a "
+            "second proxy on it is a contradiction rather than better "
+            "cover. Pick the exit with the endpoint's own `country-` "
+            "segment.")
+        raise SystemExit(2)
+
     pool = None
     if args.proxy_file or args.proxy:
-        pool = ProxyPool.from_args(args)
+        pool = proxy_pool.from_args(args)
         if pool and not len(pool):
             pool = None
 
@@ -716,13 +791,6 @@ def scrape(args) -> int:
     if limit:
         args.concurrency = min(args.concurrency, limit)
 
-    if args.cdp_endpoint and (args.proxy or args.proxy_file):
-        raise SystemExit(
-            "--proxy cannot be combined with --cdp-endpoint: the Scraping "
-            "Browser already exits through its own network, and stacking a "
-            "second proxy on it is a contradiction rather than better cover. "
-            "Pick the exit with the endpoint's own `country-` segment.")
-
     rows: List[Post] = []
     seen: set = set()
     pages_completed = 0
@@ -735,7 +803,7 @@ def scrape(args) -> int:
     dedupe_key = "comment_id" if args.mode == "post" else "sku"
 
     pages = page_flow.pages_to_plan(args.pages, None)
-    proxy_url = pool.next() if pool else args.proxy
+    proxy_url = pool.current if pool else args.proxy
 
     with sync_playwright() as pw:
         try:
@@ -901,8 +969,19 @@ def parse_args(argv=None):
 
     p.add_argument("--proxy", default=None)
     p.add_argument("--proxy-file", default=None)
-    p.add_argument("--proxy-rotate", choices=["per-page", "per-run", "on-block"],
-                   default="on-block")
+    # The choices are taken FROM proxy_pool rather than written out here.
+    # They were written out, as ["per-page", "per-run", "on-block"] with
+    # "on-block" as the default — and proxy_pool.ROTATE_MODES has only
+    # ("per-run", "per-page"), so every run that passed a proxy died on
+    # `ProxyError: rotate must be one of ...` before fetching anything.
+    # CLAUDE.md §17: when a shared module documents a constraint, grep the
+    # callers for values that violate it. Reading the constant instead
+    # makes that impossible to get wrong again.
+    p.add_argument("--proxy-rotate", choices=list(proxy_pool.ROTATE_MODES),
+                   default="per-run",
+                   help="When to move to the next exit. Rotation on a proxy "
+                        "FAILURE happens under either mode — the engine "
+                        "calls advance() when an exit dies.")
     p.add_argument("--proxy-shuffle", action="store_true")
     p.add_argument("--proxy-block-retries", type=int,
                    default=page_flow.BLOCK_RETRIES_WITHOUT_POOL)
@@ -924,9 +1003,15 @@ def parse_args(argv=None):
     p.add_argument("--fingerprint", action="store_true")
     p.add_argument("--fp-country", default=None)
     p.add_argument("--fp-tags", default="Windows",
-                   help="ONE OS-family tag. The API rejects a list: "
-                        "'Windows,Chrome,Desktop', 'Chrome' and 'Desktop' "
-                        "each answer HTTP 400.")
+                   help="ONE tag, from a short closed list. Measured "
+                        "against the live API 2026-09-21: Windows, "
+                        "Microsoft Windows, Linux and Android are accepted "
+                        "(case-insensitively); EVERYTHING else tested "
+                        "answers HTTP 400 — including macOS, iOS, Mac OS X, "
+                        "Chrome OS, Ubuntu, every browser name, every "
+                        "form-factor name, and any list such as "
+                        "'Windows,Chrome,Desktop'. There is no Apple "
+                        "platform in the set.")
     p.add_argument("--locale", default=None)
 
     p.add_argument("--allow-empty", action="store_true")

@@ -68,7 +68,16 @@ Honestly, and narrowly:
 * **a specific exit country**, if you want the feed a particular region
   sees. Not measured here — every run in this repo came out of Finland.
 * **no browser infrastructure**, via `--cdp-endpoint` (the Scraping Browser
-  API) or `scraper_api_client.py`.
+  API). **Untested here:** the only endpoint available while this was
+  written had expired — a profile's credentials live about a day — and it
+  answered `401 deny_no_user`. What that did verify is the failure path:
+  the engine reports exit 5 with the password masked in every occurrence,
+  rather than crashing. To test it properly, put a fresh endpoint in
+  `.env` as `WEIBO_CDP_ENDPOINT` (the per-site prefix matters — a variable
+  under another repo's name is reported as unrecognised and ignored).
+
+  The other browserless option, `scraper_api_client.py`, **does not reach
+  these URLs** — measured, see below.
 
 What they do **not** buy is captcha solving, because nothing challenged this
 code — see [Captchas](#captchas).
@@ -226,6 +235,30 @@ here keys on the site's own `ok` field and HTTP status instead.
 never to fire. It is there because a challenge appearing on these routes
 later would be a change in the site rather than an impossibility. If one
 ever does appear, that is worth an issue.
+
+---
+
+### The Scraper API does not reach these URLs
+
+Measured 2026-09-21 with a live key, so the bill proves the call happened:
+
+| Request | Upstream | Bytes | Price |
+|---|---|---|---|
+| `https://weibo.com/` | 200 | 3,444 | $0.0005 |
+| an `/ajax/` feed URL | **403** | 21 | $0.0005 |
+| …plus `X-Requested-With` + `Referer` | **403** | 21 | $0.0005 |
+| …via `requestHeaders` instead | **403** | 21 | $0.0005 |
+
+Those 21 bytes are `{"error":"Forbidden"}` — the same signature a browser
+`page.goto()` gets. The product fetches by **navigation**, and that is the
+shape Weibo refuses on its own API; custom headers did not change it.
+
+This is a fact about how the fetch arrives, not about the product — it
+returns weibo.com's own pages perfectly well, and sibling repos in this
+family use it successfully. `scraper_api_client.py` is kept so the
+measurement has somewhere to live and so a future change on either side has
+a client ready to test it, and it now exits 5 with that explanation rather
+than reporting "0 posts".
 
 ---
 
