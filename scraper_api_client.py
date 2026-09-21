@@ -1,57 +1,53 @@
 #!/usr/bin/env python3
 """
-bbb-scraper — 2captcha Scraper API edition (fourth engine)
-==========================================================
+weibo-scraper — 2captcha Scraper API edition (fourth engine)
+============================================================
 
-A fourth way to run this scraper. Unlike playwright_scraper.py /
-puppeteer_scraper.py / selenium_scraper.py, this one manages **no browser and
-no CDP session of its own**: it POSTs a URL to 2captcha's separate **Scraper
-API** (https://scraper.2captcha.com — a different product from the Scraping
-Browser API the other three reach through --cdp-endpoint), gets HTML back over
-plain HTTPS, and feeds it to this project's product_parser.
+A fourth way to run this scraper. Unlike the three browser engines, this
+one manages **no browser and no CDP session of its own**: it POSTs a URL to
+2captcha's separate **Scraper API** (https://scraper.2captcha.com — a
+different product from the Scraping Browser API the other three reach
+through --cdp-endpoint), gets the response back over plain HTTPS, and feeds
+it to this project's parser.
 
 Why you would want it: no Chromium to install, no CDP plumbing, runs from a
 tiny container or a lambda.
 
-WHAT THIS SITE NEEDS — READ THIS FIRST
---------------------------------------
-On BBB this client is for **`--mode profile`**, and it is a genuinely good
-fit for it: a profile is ONE page, server-rendered, with everything in the
-first response. No scrolling, nothing to wait for — exactly the shape a
-browserless fetch handles well.
+WHAT IS MEASURED HERE, AND WHAT IS NOT — READ THIS FIRST
+---------------------------------------------------------
+Two things were measured on 2026-09-21, from a datacenter address in
+Finland, and they pull in opposite directions:
 
-It is NOT the way to read a listing, and that is not a limitation of this
-client. BBB's own `/api/search` endpoint answers an ordinary HTTPS request
-with no key, no proxy and no browser (measured 2026-09-16: HTTP 200, 57 KB,
-from a datacenter address). Paying for a rendered page to get data that is
-already free is a waste, so if you want listings, use one of the three
-browser engines — or just call the endpoint.
+  a PLAIN HTTPS GET of an /ajax/ URL, carrying a visitor cookie and the
+  `X-Requested-With: XMLHttpRequest` header, returns the payload. 100
+  requests in 83 seconds, zero refusals. That is `weibo_api.WeiboClient`,
+  and it needs no key, no proxy and no browser at all.
 
-`--cdp-url` is REQUIRED here, and that is measured rather than assumed.
-2026-09-16, the same profile URL:
+  a browser NAVIGATION to the very same URL returns `403
+  {"error":"Forbidden"}` — 21 bytes. Weibo declines a top-level navigation
+  to its own API and serves the identical request made as an XHR.
 
-    plain                     upstream 403, 12,889 bytes — Cloudflare's hard
-                              block. The Scraper API's own exits are
-                              datacenter addresses and BBB refuses them.
-    routed --cdp-url through  upstream 200, 113,389 bytes, profile parsed in
-    a Scraping Browser        full: name, A+, accreditation date, complaint
-                              totals.
+Whether THIS path works therefore depends on something not measured here:
+whether the Scraper API issues its fetch as an ordinary GET with the
+headers below (in which case it works) or as a page navigation (in which
+case Weibo answers the 403 above). **No 2captcha key was available while
+this repo was written, so this engine is UNVERIFIED.** That is a statement
+about what was tested, not about the product — the other engines in this
+family use the Scraper API successfully, and nothing here suggests it
+cannot do this.
 
-So the two 2Captcha products are used TOGETHER here: the Scraper API for the
-fetch-and-parse, the Scraping Browser for the exit. Without the second, this
-path reaches nothing on bbb.org.
+What can be said without a key is the part that matters most to a reader:
+**you almost certainly do not need this path on Weibo.** The data is free
+over plain HTTPS from an ordinary address. If you run this engine and it
+works, please say so in an issue and this paragraph gets a measurement.
 
 Usage
 -----
-    # routed through a Scraping Browser API session, which is what makes it
-    # reach the site at all
-    python3 scraper_api_client.py --mode profile \
-        --url "https://www.bbb.org/us/ny/bronx/profile/cleaning-services/proclean-maintenance-systems-inc-0121-134716" \
-        --cdp-url "ws://user:pass@cb.2captcha.com:9222" --timeout 90
+    python3 scraper_api_client.py --mode hot --out weibo_posts
 
     # the key comes from $TWOCAPTCHA_KEY and the endpoint from
-    # $BBB_CDP_ENDPOINT, so neither needs to be typed — a secret in
-    # argv is readable by anything that can run `ps`
+    # $WEIBO_CDP_ENDPOINT, so neither needs to be typed — a secret in argv
+    # is readable by anything that can run `ps`
 
 Requires: pip install -r requirements.txt
           (no playwright/selenium/pyppeteer needed for this engine)
@@ -67,9 +63,9 @@ from typing import Optional
 
 import requests
 
-from product_parser import (BOT_CHALLENGE_MARKERS, DEFAULT_SORT,
-                            detect_bot_challenge, detect_page_state,
-                            parse_products, parse_profile)
+import product_parser as P
+from product_parser import (BOT_CHALLENGE_MARKERS,  # noqa: F401
+                            detect_bot_challenge, detect_page_state)
 from output_writer import save
 import env_config
 
@@ -248,29 +244,23 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
             vendor, len(html),
         )
         logger.error("A challenge page is not a final answer — retry before "
-                     "concluding anything (--retries). On BBB what clears it "
-                     "is the EXIT, not a solver: pass --cdp-url to route "
-                     "through a Scraping Browser session, or use "
-                     "playwright_scraper.py / puppeteer_scraper.py directly.")
+                     "concluding anything (--retries). Note that no challenge "
+                     "was observed on any Weibo route this repo reads, so "
+                     "reaching this line is itself news worth an issue.")
         return 3
 
-    if args.mode == "profile":
-        row = parse_profile(html, args.url)
-        products = [row] if row is not None else []
-    else:
-        products = parse_products(html, args.url, mode=args.mode,
-                                  sort=DEFAULT_SORT)
-    if args.category:
-        for row in products:
-            row.category = args.category
-    logger.info("Parsed %d business(es).", len(products))
+    products, _cursor = P.rows_for_mode(args.mode, html, page=1)
+    logger.info("Parsed %d post(s).", len(products))
 
     if not products:
         dump = f"{args.out}_scraperapi_debug.html"
         with open(dump, "w", encoding="utf-8") as f:
             f.write(html)
-        logger.warning("0 businesses parsed — saved the raw response to %s so "
-                       "you can see what actually came back.", dump)
+        logger.warning("0 posts parsed — saved the raw response to %s so "
+                       "you can see what actually came back. If it holds "
+                       "`{\"error\":\"Forbidden\"}` the fetch arrived as a "
+                       "NAVIGATION rather than an XHR, which is the case "
+                       "this engine's docstring says is unverified.", dump)
         return 4
 
     return save(products, args.out, args.format, allow_empty=args.allow_empty)
@@ -278,14 +268,13 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="BBB scraper — 2captcha Scraper API edition (no local "
-                    "browser). Built for --mode profile, which is one "
-                    "server-rendered page and a good fit. NOT the way to "
-                    "read a listing: BBB's own /api/search answers an "
-                    "ordinary HTTPS request with no key and no proxy, so "
-                    "paying for a rendered page there buys nothing. "
-                    "--cdp-url is REQUIRED — the Scraper API's own exits are "
-                    "datacenter addresses and BBB refuses them.")
+        description="Weibo scraper — 2captcha Scraper API edition (no local "
+                    "browser). UNVERIFIED: no key was available while this "
+                    "repo was written, and Weibo answers 403 to a top-level "
+                    "NAVIGATION to its own API while serving the identical "
+                    "request made as an XHR. You almost certainly do not "
+                    "need this path — the same data is free over plain "
+                    "HTTPS from an ordinary address (weibo_api.py).")
     # NOT required: prefer the TWOCAPTCHA_KEY env var. A key passed on the
     # command line is visible to anyone who can run `ps`, and it lands in
     # shell history and in any log that echoes the command line.
@@ -293,18 +282,16 @@ def parse_args():
                    help="2captcha.com API key (sent as a Bearer token). "
                         "Defaults to $TWOCAPTCHA_KEY, which is the safer way to pass it.")
     p.add_argument("--url", default=None,
-                   help="A bbb.org URL. A business profile is what this path "
-                        "is for; a listing URL works too but BBB's own "
-                        "endpoint answers that for free. Required, unless "
-                        "BBB_URL is set in the environment or in .env.")
-    p.add_argument("--mode", choices=["search", "category", "profile"],
+                   help="A weibo.com account or post URL. Not needed for "
+                        "--mode hot. Falls back to $WEIBO_URL or .env.")
+    p.add_argument("--mode", choices=["hot", "user", "post"],
                    default="profile",
                    help="Default profile, unlike the browser engines, "
                         "because a profile is the only page kind this path "
                         "reads that the free endpoint cannot.")
     p.add_argument("--category", default=None, help="Label to tag output rows with. Defaults to the category segment of the URL, so the column is never empty just because the flag was omitted.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
-    p.add_argument("--out", default="bbb_businesses_scraperapi", help="Output file prefix")
+    p.add_argument("--out", default="weibo_posts_scraperapi", help="Output file prefix")
     p.add_argument("--timeout", type=int, default=60,
                    help=f"API-side task timeout in seconds (1-{MAX_API_TIMEOUT}, default 60)")
     p.add_argument("--cdp-url", default=None,
@@ -335,11 +322,11 @@ def parse_args():
     # --cdp-endpoint, so the env mapping is spelled out instead of defaulted.
     env_config.apply(args, keys={
         "TWOCAPTCHA_KEY": "key",
-        "BBB_CDP_ENDPOINT": "cdp_url",
-        "BBB_URL": "url",
+        "WEIBO_CDP_ENDPOINT": "cdp_url",
+        "WEIBO_URL": "url",
     })
     if not args.url:
-        p.error("no --url given, and BBB_URL is not set in the environment "
+        p.error("no --url given, and WEIBO_URL is not set in the environment "
                 "or in .env.")
     return args
 

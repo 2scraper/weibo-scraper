@@ -337,6 +337,7 @@ async def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
     """Fetch one API URL, with retries, and parse it."""
     attempts = max(1, int(args.retries) + 1)
     last_error: Optional[str] = None
+    blocked_tries = 0
 
     for attempt in range(1, attempts + 1):
         budget = page_flow.SolveBudget()
@@ -366,11 +367,25 @@ async def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 return PageOutcome(page_num, url, rows=rows, state=state,
                                    next_cursor=cursor)
 
-            if page_flow.counts_as_blocked(state) and not page_flow.should_retry(state):
-                log.error("[x] page %d: %s — this wants an ACCOUNT, not a "
-                          "different address or another attempt. Not "
-                          "retrying.", page_num, state)
-                return PageOutcome(page_num, url, state=state, error=state)
+            if page_flow.counts_as_blocked(state):
+                # Two questions, and they are different. The POLICY says
+                # whether this particular state is worth another attempt;
+                # RETRY_ON_BLOCKED says whether a blocked page is worth
+                # re-fetching at all on this site. Both are consulted, so
+                # neither is prose pretending to be enforcement (§17).
+                if not (page_flow.RETRY_ON_BLOCKED
+                        and page_flow.should_retry(state)):
+                    log.error("[x] page %d: %s — this wants an ACCOUNT, not a "
+                              "different address or another attempt. Not "
+                              "retrying.", page_num, state)
+                    return PageOutcome(page_num, url, state=state, error=state)
+                budgeted = (len(pool) - 1 if pool
+                            else page_flow.BLOCK_RETRIES_WITHOUT_POOL)
+                if blocked_tries >= budgeted:
+                    log.error("[x] page %d: %s and the block-retry budget "
+                              "(%d) is spent", page_num, state, budgeted)
+                    return PageOutcome(page_num, url, state=state, error=state)
+                blocked_tries += 1
 
             last_error = state
             if not page_flow.should_retry(state):

@@ -182,19 +182,19 @@ def sample_check():
     sys.path.insert(0, str(REPO))
     from dataclasses import asdict
 
-    from output_writer import Business
-    expected = list(asdict(Business()).keys())
+    from output_writer import Post
+    expected = list(asdict(Post()).keys())
 
     for i, row in enumerate(rows):
         if list(row.keys()) != expected:
             failed.append(f"sample_output.json row {i}: columns differ from "
-                          f"output_writer.Business")
+                          f"output_writer.Post")
             break
 
     with (REPO / "sample_output.csv").open(newline="", encoding="utf-8") as handle:
         header = next(csv.reader(handle))
     if header != expected:
-        failed.append("sample_output.csv header differs from output_writer.Business")
+        failed.append("sample_output.csv header differs from output_writer.Post")
 
     if not failed:
         discounted = sum(1 for r in rows if r.get("original_price"))

@@ -1,43 +1,46 @@
-# One real run against bbb.org. tests.yml (deliberately) never touches the
-# site — see its own header.
+# One real run against weibo.com. tests.yml (deliberately) never touches the
+# site or a credential; this is the workflow that does.
 #
-# This canary is unusual for this family, and the reason is worth stating at
-# the top: **the listing path needs no credentials at all**, so it really can
-# run nightly from a bare GitHub runner and be green.
+# It needs NO SECRET, and that is the point rather than a convenience.
 #
-# BBB renders its listings out of its own JSON endpoint, and that endpoint is
-# not behind Cloudflare. Measured 2026-09-16 from a datacenter VPS that gets
-# HTTP 403 on every HTML page on the site: HTTP 200, 57 KB, 15 complete
-# business records. A GitHub runner is a datacenter address too, which is
-# exactly the case this proves.
+# Every route this repo reads is open to an anonymous visitor cookie, which
+# the run mints for itself in about a second. Measured 2026-09-21 from a
+# datacenter address in Finland with no proxy and no key: the handshake
+# succeeded 5 times out of 5 and 100 requests in 83 seconds drew zero
+# refusals. The README's central claim is that you do not need to buy
+# anything to read these three modes — so this job runs that claim, from a
+# bare runner, every morning. If Weibo ever puts the feed behind a login or
+# starts scoring datacenter addresses, the badge goes red the next day and
+# the claim is retested without anyone having to remember to.
 #
-# The PROFILE path is different — it fetches a Cloudflare-gated page — so that
-# half is guarded on a secret and SKIPS with a ::notice:: when the secret is
-# absent. A check that is always red teaches everyone to ignore checks
-# (CLAUDE.md §11).
+# CLAUDE.md §21: a canary that CAN pass without a credential must never be
+# gated on one. The inverse rule — a canary that cannot pass must SKIP
+# rather than fail — does not apply here, because this one can.
 #
-#     gh secret set BBB_CDP_ENDPOINT --repo 2scraper/bbb-scraper
-#
-# `secrets` is not available in a job-level `if`, so presence is tested
-# through job `env` and read in each step's `if`.
+# BEFORE TRUSTING THE BADGE, dispatch this once by hand and read the log
+# (CLAUDE.md §15 step 6). The measurement above is from a Hetzner address in
+# Finland; a GitHub runner is a different network, and whether Weibo treats
+# it the same way is NOT something this repo has measured. The first
+# dispatch is what turns that into a fact. Note that `workflow_dispatch`
+# requires the workflow to exist on the DEFAULT branch — from a feature
+# branch `gh workflow run` answers "not found on the default branch", which
+# reads like a typo in the filename.
 
 name: canary
 
 on:
   schedule:
-    # 05:40 UTC. Not on the hour: every scheduled workflow on GitHub fires at
-    # :00 and the queue there is long.
-    - cron: "40 5 * * *"
+    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  listing:
-    name: listing (no credentials needed)
+  hot-feed:
+    name: hot feed (no credentials)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,226 +51,185 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-playwright.txt
-          playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium
 
-      # >= 3 pages, because with one page pagination is never exercised —
-      # which is exactly how a silent single-page bug survived in a sibling
-      # repo (§11).
       - name: Run
         id: run
         run: |
-          set +e   # GitHub runs `run:` under `bash -e`, and a non-zero exit
-                   # would abort the step BEFORE the echo below.
+          # GitHub Actions runs `run:` steps under `bash -e`, so a non-zero
+          # command aborts the step BEFORE a following `echo exit_code=$?`
+          # and `continue-on-error` does not change that — it stops the step
+          # failing the job, not the shell's errexit.
+          set +e
           python playwright_scraper.py \
-            --text restaurants --location "New York, NY" \
-            --sort a-z --pages 3 --format both --out canary
+            --mode hot --pages 3 --delay 2 \
+            --format both --out canary --dump-html
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
-      - name: Check what came back
+      - name: Interpret the exit code
+        run: |
+          code="${{ steps.run.outputs.exit_code }}"
+          case "$code" in
+            0) echo "::notice::exit 0 — the feed was read with no credentials, "\
+                    "which is what the README claims." ;;
+            3) echo "::error::exit 3 — BLOCKED. Two candidate causes and they "\
+                    "want different answers: (a) Weibo now wants an account "\
+                    "for a route that was open, which is a real change worth "\
+                    "an issue; (b) this runner's address is scored while the "\
+                    "site is otherwise fine. Check the dumped response: a "\
+                    "login wall says so in its own words. Reproduce from a "\
+                    "residential address before concluding (a)." ;;
+            4) echo "::error::exit 4 — the feed was served and held nothing. "\
+                    "Served-but-empty is a parser question, not an access "\
+                    "one: read the dumped payload." ;;
+            5) echo "::error::exit 5 — a remote service failed, not this code." ;;
+            6) echo "::error::exit 6 — partial. Some fetches failed; the "\
+                    "sidecar names which." ;;
+            *) echo "::error::exit $code" ;;
+          esac
+          exit "$code"
+
+      - name: Assert what the run actually produced
         run: |
           python - <<'PY'
-          import json, os, sys
-
-          code = int(os.environ["EXIT_CODE"])
-          if code != 0:
-              print(f"::error::The run exited {code}.")
-              # Interpret it rather than just failing: the codes mean
-              # different things and only some of them are this repo's fault.
-              print({
-                  3: "Blocked (exit 3). BBB refused a GitHub runner's address "
-                     "on the ENDPOINT, which has never happened in testing — "
-                     "if this is real, the endpoint's access policy changed "
-                     "and the README's central claim needs re-measuring.",
-                  4: "Zero businesses (exit 4). Either the query genuinely "
-                     "matches nothing now, or the payload shape moved.",
-                  5: "Remote API error (exit 5) — nothing was tested.",
-                  6: "Partial (exit 6): some pages came back and some did not.",
-              }.get(code, "See the log."))
-              sys.exit(1)
-
-          meta = json.load(open("canary.meta.json"))
+          import json, sys
           rows = json.load(open("canary.json"))
-          print(json.dumps(meta, indent=1))
+          meta = json.load(open("canary.meta.json"))
+          bad = []
 
-          failures = []
-          def want(label, ok, detail):
-              if not ok:
-                  failures.append(f"{label}: {detail}")
+          def want(cond, msg):
+              if not cond:
+                  bad.append(msg)
 
-          want("status", meta["status"] == "complete", meta["status"])
-          want("pages_completed", meta["pages_completed"] == 3,
-               f'{meta["pages_completed"]} of 3')
-          want("no failed pages", not meta["pages_failed"],
-               str(meta["pages_failed"]))
+          want(meta["status"] == "complete",
+               f"status is {meta['status']!r}, not complete")
+          want(meta["mode"] == "hot", "mode")
+          want(meta["source"] == "weibo.com", "source")
+          # The hot feed is not addressable — it re-rolls rather than
+          # paginating — so three fetches is three fetches, and the stop
+          # reason must say so rather than claiming pagination ran out.
+          want(meta["stop_reason"] == "feed_not_addressable",
+               f"stop_reason is {meta['stop_reason']!r}")
+          want(meta["pages_completed"] == 3,
+               f"only {meta['pages_completed']} of 3 fetches completed")
 
-          # BBB serves a FIXED 15 per page, so three pages is 45 and the floor
-          # can sit close. Measured 2026-09-16: 15/15/15 on every listing page
-          # captured, across two countries and three queries.
-          want("row floor", len(rows) >= 40, f"{len(rows)} rows")
-          want("page size", meta.get("pages_available") == 15,
-               f'totalPages was {meta.get("pages_available")}')
+          # A floor, not an exact count: the feed served 9 or 10 posts per
+          # fetch across every run measured on 2026-09-21, and a number that
+          # varies between runs must not be written as an equality.
+          want(len(rows) >= 24, f"only {len(rows)} rows from 3 fetches")
 
-          # The ordering decides WHICH businesses are in the file, so a run
-          # whose sort the site quietly ignored is not comparable to
-          # yesterday's.
-          want("sort applied", meta.get("sort_applied") == "a-z",
-               f'asked a-z, site applied {meta.get("sort_applied")!r}')
+          # Columns the site fills on every post it serves.
+          for col in ("sku", "mid", "url", "title", "created_at", "author_id",
+                      "author_name", "attitudes_count", "text_source"):
+              missing = [r["sku"] for r in rows if r.get(col) in (None, "")]
+              want(not missing,
+                   f"{col} empty on {len(missing)} of {len(rows)} rows")
 
-          # The columns BBB fills on every record. Not rating_grade: 7 of 105
-          # captured businesses are genuinely ungraded, so a floor there would
-          # fire on healthy data.
-          for column in ("title", "url", "sku", "category", "latitude"):
-              filled = sum(1 for r in rows if r.get(column) not in (None, "", []))
-              share = 100.0 * filled / len(rows)
-              print(f"{column}: {filled}/{len(rows)} ({share:.0f}%)")
-              want(f"{column} coverage", share >= 99, f"{share:.0f}%")
-
-          # The two traps most likely to come back silently.
-          want("no markup in titles",
-               not any("<" in (r.get("title") or "") for r in rows),
-               "an <em> survived the strip")
-          want("no rating_score of 0.0",
-               not any(r.get("rating_score") == 0.0 for r in rows),
-               "an ungraded business was written through as 0.0")
-
-          # page+position must be unique across pages, or the column is
-          # worthless — position restarts at 1 on every page.
+          # page + position must be unique, or the column is worthless.
           pairs = [(r["page"], r["position"]) for r in rows]
-          want("page+position unique", len(set(pairs)) == len(pairs),
-               f"{len(pairs) - len(set(pairs))} collisions")
-          want("sku unique", len({r["sku"] for r in rows}) == len(rows),
-               "duplicate skus")
+          want(len(set(pairs)) == len(pairs), "page+position not unique")
+          want(len({r["sku"] for r in rows}) == len(rows), "sku not unique")
 
-          graded = sum(1 for r in rows if r.get("rating_grade"))
-          print(f"graded by BBB: {graded}/{len(rows)}")
-          print(f"BBB reports {meta.get('total_results')} results for this query")
+          # The truncation trap. Rows may legitimately stay truncated when
+          # the recovery endpoint cannot be reached, but not many, and a
+          # row must never be written still carrying the mark.
+          left = sum(1 for r in rows if r["text_truncated"])
+          want(left <= max(2, len(rows) // 10),
+               f"{left} of {len(rows)} rows still hold truncated text")
+          want(not [r for r in rows
+                    if (r["title"] or "").rstrip().endswith("​")],
+               "a row was written still ending in a zero-width space")
 
-          if failures:
-              for line in failures:
-                  print(f"::error::{line}")
+          # The display-strategy trap, asserted on the output itself.
+          want(all(isinstance(r["attitudes_count"], int) for r in rows),
+               "a like count is not an integer — display_text leaked in")
+
+          print(f"rows                {len(rows)}")
+          print(f"stop_reason         {meta['stop_reason']}")
+          print(f"long text flagged   {meta.get('long_text_flagged')}")
+          print(f"long text recovered {meta.get('long_text_recovered')}")
+          print(f"still truncated     {left}")
+          if bad:
+              print("\nFAILED:")
+              for b in bad:
+                  print("  -", b)
               sys.exit(1)
-          print("All canary assertions passed.")
+          print("\nok")
           PY
-        env:
-          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: canary-listing
+          name: canary-hot
           path: |
             canary.json
             canary.csv
             canary.meta.json
-            canary_page*_debug.html
-          if-no-files-found: ignore
+            canary_debug.*
+          if-no-files-found: warn
 
-  profile:
-    name: profile (needs a Scraping Browser secret)
+  user-and-comments:
+    name: user + comments (no credentials)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      # `secrets` is not available in a job-level `if`, so presence is tested
-      # here and read in each step's `if`.
-      HAVE_CDP: ${{ secrets.BBB_CDP_ENDPOINT != '' }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Explain the skip
-        if: env.HAVE_CDP != 'true'
-        run: |
-          echo "::notice::Skipping the profile run: no BBB_CDP_ENDPOINT secret is set."
-          echo "A business profile page is Cloudflare-gated, and a GitHub runner is a"
-          echo "datacenter address, so this half cannot pass without a residential exit."
-          echo "The LISTING job above needs no credentials and is the real canary."
-          echo ""
-          echo "    gh secret set BBB_CDP_ENDPOINT --repo 2scraper/bbb-scraper"
-          {
-            echo "### Profile canary skipped"
-            echo "No \`BBB_CDP_ENDPOINT\` secret. The listing canary covers the parser;"
-            echo "this job covers the gated page only."
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - uses: actions/setup-python@v5
-        if: env.HAVE_CDP == 'true'
         with:
           python-version: "3.12"
-
       - name: Install
-        if: env.HAVE_CDP == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-playwright.txt
-          playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium
 
-      - name: Run
-        id: run
-        if: env.HAVE_CDP == 'true'
-        env:
-          # Through the ENVIRONMENT, not a --flag: env_config.py already reads
-          # exactly this name, an unset secret arrives as an empty string
-          # which the loader treats as unset, and the credential never reaches
-          # a command line (§3, §11).
-          BBB_CDP_ENDPOINT: ${{ secrets.BBB_CDP_ENDPOINT }}
+      # A large institutional account, chosen on purpose: it posts daily, so
+      # the cursor has somewhere to walk, and it is an organisation rather
+      # than a private individual — a daily automated read of one person's
+      # timeline is a different thing from reading a newspaper's.
+      - name: User mode
+        id: user
         run: |
           set +e
-          python playwright_scraper.py --mode profile \
-            --url "https://www.bbb.org/us/ny/bronx/profile/cleaning-services/proclean-maintenance-systems-inc-0121-134716" \
-            --format json --out canary_profile
+          python playwright_scraper.py \
+            --mode user --url https://weibo.com/u/2803301701 \
+            --pages 3 --delay 2 --out canary_user
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
-      - name: Check what came back
-        if: env.HAVE_CDP == 'true'
-        env:
-          EXIT_CODE: ${{ steps.run.outputs.exit_code }}
+      - name: Assert
         run: |
+          code="${{ steps.user.outputs.exit_code }}"
+          [ "$code" = "0" ] || { echo "::error::user mode exited $code"; exit "$code"; }
           python - <<'PY'
-          import json, os, sys
-          code = int(os.environ["EXIT_CODE"])
-          if code == 3:
-              # Access, not a regression — and not a failure of this repo.
-              print("::warning::Blocked (exit 3). The Scraping Browser profile "
-                    "was refused or has expired. Nothing was tested; this is "
-                    "access rather than a parser regression.")
-              sys.exit(0)
-          if code == 5:
-              print("::warning::Remote API error (exit 5). If the log says "
-                    "'profile_locked', another run still holds this pid — give "
-                    "CI its own. Otherwise the secret has expired.")
-              sys.exit(0)
-          if code != 0:
-              print(f"::error::The profile run exited {code}.")
+          import json, sys
+          rows = json.load(open("canary_user.json"))
+          meta = json.load(open("canary_user.meta.json"))
+          bad = []
+          if len({r["author_id"] for r in rows}) != 1:
+              bad.append("a user run returned more than one author")
+          if len(rows) < 30:
+              bad.append(f"only {len(rows)} rows over 3 cursor pages")
+          if meta.get("statuses_claimed") is None:
+              bad.append("the sidecar does not record what the account claims "
+                         "— without it a 59-row file looks like the whole "
+                         "account instead of a slice of it")
+          if not all(r["author_followers"] for r in rows):
+              bad.append("follower count missing: the profile call did not "
+                         "run or did not thread through")
+          print(f"rows {len(rows)}  account {meta.get('account')}  "
+                f"claims {meta.get('statuses_claimed')} posts")
+          if bad:
+              for b in bad:
+                  print("FAILED:", b)
               sys.exit(1)
-
-          rows = json.load(open("canary_profile.json"))
-          row = rows[0]
-          failures = []
-          if len(rows) != 1:
-              failures.append(f"expected one row, got {len(rows)}")
-          # The columns that exist ONLY on a profile — if these are empty the
-          # gated page was fetched and not understood, which is the regression
-          # this job exists to catch.
-          for column in ("accredited_since", "bbb_file_opened",
-                         "years_in_business", "entity_type", "website"):
-              if row.get(column) in (None, "", []):
-                  failures.append(f"{column} is empty")
-          if row.get("data_source") != "profile":
-              failures.append(f'data_source is {row.get("data_source")!r}')
-          # The join with a listing row is the whole point of rebuilding sku.
-          if not row.get("sku", "").startswith("0121_134716_"):
-              failures.append(f'sku {row.get("sku")!r} no longer joins a listing row')
-          for line in failures:
-              print(f"::error::{line}")
-          print(json.dumps(row, indent=1)[:1200])
-          sys.exit(1 if failures else 0)
+          print("ok")
           PY
 
       - uses: actions/upload-artifact@v4
-        if: always() && env.HAVE_CDP == 'true'
+        if: always()
         with:
-          name: canary-profile
+          name: canary-user
           path: |
-            canary_profile.json
-            canary_profile.meta.json
-            canary_profile_page*_debug.html
-          if-no-files-found: ignore
+            canary_user.json
+            canary_user.meta.json
+          if-no-files-found: warn
