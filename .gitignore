@@ -14,9 +14,37 @@
 weibo_posts.*
 weibo_posts_*.*
 
-# --- the live-test harness's working directory ---------------------------
+# --- scratch directories a run drops captures into -----------------------
+# Keyed on the KIND of directory, not on one name somebody chose. CLAUDE.md
+# §24 records a sibling that staged a 1.5 MB raw dump on its first commit
+# through `live/`, because the pattern list held `live_results/` and every
+# other entry was also a name. Measured here on 2026-09-21 before this
+# block existed: live/, out/, output/, runs/, results/, tmp/, scratch/ and
+# dumps/ were ALL unignored, and so was a bare .html at the repo root.
+live/
 live_results/
 live_results.zip
+out/
+output/
+run/
+runs/
+result/
+results/
+tmp/
+scratch/
+dump/
+dumps/
+captures/
+
+# A stray page dump saved at the repo root. Scoped to the root and NOT
+# `**/*.html`, so nothing under docs/ or .github/ is touched — and the
+# landing page is negated by name, because this family commits it. The
+# first draft of this rule claimed in its own comment that the landing page
+# "belongs in git" while silently ignoring it, which is the over-broad rule
+# §24 warns about: a pattern this wide needs its negative half written down
+# and tested, or it becomes a rule somebody switches off.
+/*.html
+!landing.html
 
 # --- debug artifacts the engines drop next to themselves -----------------
 # Written on purpose when a page yields nothing or comes back blocked, and by
@@ -25,10 +53,9 @@ live_results.zip
 *_debug.png
 *.html.page*
 
-# --- captures kept for parser work ---------------------------------------
-# The smoke suite's fixtures are committed (trimmed, inside smoke_test.py);
-# the multi-megabyte originals they were cut from are not.
-captures/
+# (captures/ is covered by the scratch-directory block above; the smoke
+# suite's fixtures are committed, trimmed and scrubbed, inside
+# smoke_test.py — the multi-megabyte originals are not.)
 
 # --- the landing page and the proxy list ---------------------------------
 # Both live outside the repo on purpose: the landing page is published

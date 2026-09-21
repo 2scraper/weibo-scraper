@@ -1800,6 +1800,140 @@ def test_fixtures_are_scrubbed():
               "every fixture uid is renumbered out of the real range")
 
 
+def test_capture_directories_cannot_reach_a_commit():
+    """Both halves of the .gitignore rule, run through git itself.
+
+    CLAUDE.md §24: a sibling staged a 1.5 MB raw page dump on its first
+    commit through `live/`, because every pattern in the list was a NAME
+    somebody had chosen rather than a KIND of directory. Measured in this
+    repo on 2026-09-21 before the fix: live/, out/, output/, runs/,
+    results/, tmp/, scratch/ and dumps/ were all unignored, and so was a
+    bare .html at the repo root.
+
+    The NEGATIVE half is pinned too, and that is not symmetry for its own
+    sake — a rule this broad has to leave .github/, tests/ and the
+    committed samples alone, or it becomes a rule somebody switches off.
+    The first draft of `/*.html` swallowed `landing.html` while its own
+    comment said the landing page belongs in git.
+
+    Asks git rather than reading the file, because .gitignore precedence is
+    easy to get wrong by reading.
+    """
+    def ignored(path):
+        return subprocess.run(["git", "check-ignore", "-q", path],
+                              cwd=HERE).returncode == 0
+
+    if subprocess.run(["git", "rev-parse", "--git-dir"], cwd=HERE,
+                      capture_output=True).returncode != 0:
+        return skip("gitignore", "not a git repository")
+
+    must_be_ignored = ["live", "live_results", "out", "output", "run",
+                       "runs", "result", "results", "tmp", "scratch",
+                       "dump", "dumps", "captures"]
+    for name in must_be_ignored:
+        d = os.path.join(HERE, name)
+        made = not os.path.isdir(d)
+        os.makedirs(d, exist_ok=True)
+        probe = os.path.join(d, "sel_dump.html")
+        try:
+            with open(probe, "w") as fh:
+                fh.write("<html>probe</html>")
+            check(ignored(probe),
+                  f"a page dump in {name}/ is NOT ignored — one `git add -A` "
+                  "from a commit")
+        finally:
+            # A test must not mutate the working tree (CLAUDE.md §10).
+            if os.path.exists(probe):
+                os.remove(probe)
+            if made and os.path.isdir(d) and not os.listdir(d):
+                os.rmdir(d)
+
+    stray = os.path.join(HERE, "sel_dump.html")
+    try:
+        with open(stray, "w") as fh:
+            fh.write("<html>probe</html>")
+        check(ignored(stray), "a stray .html at the repo root is NOT ignored")
+    finally:
+        if os.path.exists(stray):
+            os.remove(stray)
+
+    # The negative half.
+    for keep in (".github/ci_checks.py", ".github/workflows/tests.yml",
+                 "tests/test_smoke.py", "smoke_test.py", "README.md",
+                 "sample_output.json", "sample_output.csv"):
+        if os.path.exists(os.path.join(HERE, keep)):
+            check(not ignored(os.path.join(HERE, keep)),
+                  f"{keep} is WRONGLY ignored — the scratch-directory rule "
+                  "has over-reached")
+
+    landing = os.path.join(HERE, "landing.html")
+    made = not os.path.exists(landing)
+    try:
+        if made:
+            with open(landing, "w") as fh:
+                fh.write("<html>landing</html>")
+        check(not ignored(landing),
+              "landing.html is ignored, but this family commits it — the "
+              "root .html rule needs its negation")
+    finally:
+        if made and os.path.exists(landing):
+            os.remove(landing)
+
+
+def test_a_credential_shaped_value_is_caught_through_any_escaping():
+    """CLAUDE.md §24's other family-core hole, pinned here.
+
+    Fixtures in this family are stored as JSON STRINGS, so every quote
+    inside them arrives escaped: the file holds a backslash before each
+    one. A pattern written with bare quotes therefore matches zero times in
+    the largest file in the repository — exactly where a captured
+    front-end key would land. And the bare-hex rule is blind to a 32-char
+    ALPHANUMERIC key, which is what several sites' front-end keys are.
+
+    Measured here on 2026-09-21: an alphanumeric key planted inside this
+    file's own fixture passed the scan with "nothing credential-shaped".
+    """
+    import importlib.util
+    path = os.path.join(HERE, ".github", "ci_checks.py")
+    if not os.path.isdir(os.path.join(HERE, ".github")):
+        # Triggered by the whole directory being absent, never by one file
+        # inside it going missing — a check that quietly starts passing
+        # once its input disappears is the §22 failure mode.
+        return skip("ci_checks", "no .github directory (the Docker image)")
+    spec = importlib.util.spec_from_file_location("ci_checks_probe", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    VALUE = "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY"   # 32 chars, NOT all hex
+    # ASSEMBLED from pieces, never written out. This file is scanned by its
+    # own scrub guard and by ci_checks.py, so a 32-hex literal here IS a
+    # 32-hex literal in the repository — a check that demonstrates a
+    # credential shape is a use of that shape, the same trap as quoting a
+    # banned phrase in the note that fixes it (CLAUDE.md §22). Both new
+    # rules caught it, which is them working.
+    HEX_PROBE = "a1b2c3d4" + "e5f6a7b8" + "c9d0e1f2" + "a3b4c5d6"
+    shapes = {
+        "bare quotes": '"apiKey": "%s"' % VALUE,
+        "JSON-escaped": '\\"apiKey\\": \\"%s\\"' % VALUE,
+        "double-escaped": '\\\\"apiKey\\\\": \\\\"%s\\\\"' % VALUE,
+        "escaped 32-hex": '\\"clientKey\\": \\"' + HEX_PROBE + '\\"',
+    }
+    for label, text in shapes.items():
+        hits = mod.KEY_SHAPED_FIELD.findall(text)
+        caught = bool(hits) and not any(
+            token in hits[0][1].lower() for token in mod.KEY_SHAPED_ALLOWED)
+        check(caught, f"a credential-shaped value written with {label} is "
+                      "not caught by the secret scan")
+
+    # A documented placeholder must still pass, or the check is one people
+    # learn to suppress.
+    placeholder = '"apiKey": "your_2captcha_api_key_here_xxxx"'
+    hits = mod.KEY_SHAPED_FIELD.findall(placeholder)
+    passes = not hits or any(token in hits[0][1].lower()
+                             for token in mod.KEY_SHAPED_ALLOWED)
+    check(passes, "a documented placeholder is reported as a credential")
+
+
 def test_env_example_matches_what_the_code_reads():
     """Equal in BOTH directions. A documented-but-unread variable is worse
     than an undocumented one (CLAUDE.md §3)."""

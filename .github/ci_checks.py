@@ -88,6 +88,35 @@ HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 HEX32_ALLOWED = ("sha", "hash", "nonce", "example", "md5", "digest",
                  "checksum")
 
+# A credential-shaped VALUE sitting in a credential-shaped FIELD, whatever
+# alphabet it uses.
+#
+# Two things this repo could not see before, both from CLAUDE.md §24:
+#
+#   * the bare-hex rule above is blind to a 32-char ALPHANUMERIC key, which
+#     is what several sites' front-end keys look like. Planted in this
+#     repo's fixtures on 2026-09-21, one passed with "nothing
+#     credential-shaped";
+#   * every fixture in this family is stored as a JSON STRING, so a quote
+#     inside it arrives ESCAPED — the file holds \\"apiKey\\" and never
+#     "apiKey". A pattern written with bare quotes therefore matches zero
+#     times in the largest file in the repository, which is precisely where
+#     a captured front-end key would arrive.
+#
+# Hence `\\*"` on every quote — ANY depth of escaping, because a site
+# that embeds JSON inside a JSON field doubles it again — and a character
+# class rather than hex.
+KEY_SHAPED_FIELD = re.compile(
+    r'\\*"([A-Za-z_]*(?:api|access|secret|private|auth|client|bearer)'
+    r'[A-Za-z_]*(?:key|token|secret|pass|pwd)[A-Za-z_]*)\\*"'
+    r'\s*:\s*\\*"([A-Za-z0-9_\-]{20,})\\*"',
+    re.I)
+
+# Values that are documented placeholders rather than credentials. Named,
+# not pattern-matched, so adding one stays a decision (§17).
+KEY_SHAPED_ALLOWED = ("your_", "placeholder", "scrubbed", "example",
+                      "changeme", "xxxx", "<", "{")
+
 SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example")
 
 
@@ -222,6 +251,13 @@ def secret_check():
                     continue
                 failed.append(f"{rel}:{lineno} contains {match[:6]}… — a "
                               f"32-char hex string, the shape of a 2captcha key")
+
+            for field, value in KEY_SHAPED_FIELD.findall(line):
+                if any(token in value.lower() for token in KEY_SHAPED_ALLOWED):
+                    continue
+                failed.append(
+                    f"{rel}:{lineno} has {field!r} set to {value[:6]}… — a "
+                    f"credential-shaped value in a credential-shaped field")
 
     if not failed:
         print(f"ok       {scanned} files scanned, nothing credential-shaped")
