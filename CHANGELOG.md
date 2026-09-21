@@ -86,9 +86,24 @@ First release. Three modes, three engines, all run live against weibo.com.
 - `--proxy` with `--cdp-endpoint` is refused with exit 2 (bad usage) and
   the check runs BEFORE the pool is built — it used to sit after, so the
   run crashed on the way to the message instead of reading it.
-- The Scraping Browser path (`--cdp-endpoint`) remains **untested**: the
-  only endpoint available had expired (`401 deny_no_user`). The failure
-  path was verified — exit 5, credentials masked, no traceback.
+- The Scraping Browser path (`--cdp-endpoint`) is **verified**, and fixing
+  it found a defect worth naming: the engines minted the visitor cookie
+  over HTTP from the LOCAL address and installed it into the remote
+  browser. Measured in one session, the remote browser left from a
+  residential US address (AS11776, California) while the handshake left
+  from a Finnish datacenter (AS24940) — CLAUDE.md §8's "issued against exit
+  A, replayed from exit B", and it also wasted what the Scraping Browser is
+  bought for, since the cookie IS the session identity. A remote session
+  now navigates to weibo.com and lets the SITE run its own handshake.
+  Playwright and pyppeteer both verified live; Selenium refuses an
+  authenticated endpoint by design and says why.
+- Counted the block markers on a page fetched THROUGH the Scraping Browser,
+  which every earlier count in this repo had missed: its auto-solve
+  extension injects `cf-turnstile`, `turnstile`, `hunter.js` and
+  `chrome-extension://` into every page, and takes `captcha` from 4
+  occurrences to 19 — on a page Weibo served normally. The marker set was
+  already narrow enough to return None, and the suite now pins that against
+  a fixture built from those counts.
 
 ### Checks added, each controlled by planting the fault
 

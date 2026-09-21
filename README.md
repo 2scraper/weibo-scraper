@@ -67,14 +67,23 @@ Honestly, and narrowly:
   measurement above is 100 requests, not 100,000.
 * **a specific exit country**, if you want the feed a particular region
   sees. Not measured here — every run in this repo came out of Finland.
-* **no browser infrastructure**, via `--cdp-endpoint` (the Scraping Browser
-  API). **Untested here:** the only endpoint available while this was
-  written had expired — a profile's credentials live about a day — and it
-  answered `401 deny_no_user`. What that did verify is the failure path:
-  the engine reports exit 5 with the password masked in every occurrence,
-  rather than crashing. To test it properly, put a fresh endpoint in
-  `.env` as `WEIBO_CDP_ENDPOINT` (the per-site prefix matters — a variable
-  under another repo's name is reported as unrecognised and ignored).
+* **a residential exit and no browser infrastructure**, via
+  `--cdp-endpoint` (the Scraping Browser API). **Verified 2026-09-21** with
+  a live endpoint: Playwright and pyppeteer both ran clean, and the output
+  is column-for-column identical to a local run. Selenium refuses an
+  authenticated endpoint by design — see [Engines](#engines).
+
+  What it actually changes is the address. Measured in one session:
+
+  | | Exit |
+  |---|---|
+  | the Scraping Browser | `23.244.216.86` — California, **AS11776 Breezeline (residential)** |
+  | this machine | `65.108.17.126` — Helsinki, AS24940 Hetzner (datacenter) |
+
+  Note the profile allows **one live connection**, and a second attempt
+  answers `500 profile_locked` — or sometimes `401 Authentication error`,
+  which reads like a bad credential and is not. Use several `pid`s, one run
+  each.
 
   The other browserless option, `scraper_api_client.py`, **does not reach
   these URLs** — measured, see below.
@@ -230,6 +239,27 @@ Counted on a served profile page: `CAPTCHA_TYPE` ×4, `geetest` ×1, `yidun`
 even a vendor's loader is a usable block marker. Anything keying on the word
 `captcha` or `geetest` calls every page a challenge; the block detection
 here keys on the site's own `ok` field and HTTP status instead.
+
+### If you run this over `--cdp-endpoint`, the counts change
+
+The Scraping Browser ships an auto-solve extension that injects its own
+hunters into every page it loads. The same served page, fetched both ways
+on 2026-09-21:
+
+| Marker | Direct | Through the Scraping Browser |
+|---|---|---|
+| `captcha` | 4 | **19** |
+| `geetest` | 1 | 2 |
+| `chrome-extension://` | 0 | 16 |
+| `hunter.js` | 0 | 4 |
+| `turnstile` | 0 | 3 |
+| `cf-turnstile` | 0 | 1 |
+
+That page was 2,566 bytes and Weibo served it normally. So on this site the
+obvious captcha words are wrong twice over — inverted on a direct fetch, and
+amplified by the paid browser. The block detection here keys on the site's
+own `ok` field and HTTP status, and the suite pins that nothing in the
+marker set matches an injection.
 
 `--solve-captcha` is wired and defaults to `when-blocked`, and is expected
 never to fire. It is there because a challenge appearing on these routes

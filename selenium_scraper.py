@@ -251,6 +251,28 @@ class _BrowserSession:
                         LANDING_URL, _mask(exc)[:120])
 
     def _install_visitor_cookies(self) -> None:
+        """Give the session a visitor cookie.
+
+        Two routes, because the right one depends on WHERE the browser is.
+
+        LOCAL browser: mint over HTTP through the same proxy the browser
+        uses, and install the jar.
+
+        REMOTE browser (--cdp-endpoint): navigate it to weibo.com and let
+        the SITE run its own handshake, so the cookie is issued to that
+        browser, from that browser's address.
+
+        The original code minted over HTTP for the remote case too, with no
+        proxy, so the cookie was issued to this machine and replayed from
+        the Scraping Browser's exit. Measured 2026-09-21 in one session:
+        the remote browser left from a residential US address (AS11776,
+        California) while the HTTP handshake left from a Finnish datacenter
+        (AS24940). CLAUDE.md §8 — and it also wasted what the Scraping
+        Browser is bought for, since the cookie IS the session identity.
+        """
+        if self.remote:
+            self._mint_in_browser()
+            return
         try:
             jar = W.mint_visitor_cookies(
                 user_agent=self.user_agent,
@@ -274,6 +296,27 @@ class _BrowserSession:
         except (SeleniumError, SeleniumTimeout):
             pass
         log.info("[+] visitor cookies installed in the browser")
+
+
+    def _mint_in_browser(self) -> None:
+        """Let the site hand the REMOTE browser its own visitor cookie."""
+        try:
+            self.driver.get(LANDING_URL)
+            time.sleep(4)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[!] could not run the visitor handshake in the "
+                        "remote browser: %s", _mask(exc)[:140])
+            return
+        try:
+            names = {c.get("name") for c in self.driver.get_cookies()}
+        except Exception:  # noqa: BLE001
+            names = set()
+        if "SUB" in names:
+            log.info("[+] visitor cookie minted BY the remote browser, from "
+                     "its own exit (%d cookies)", len(names))
+        else:
+            log.warning("[!] the remote browser finished the handshake with "
+                        "no SUB cookie — cookies present: %s", sorted(names))
 
     def remint_visitor(self) -> None:
         self._install_visitor_cookies()

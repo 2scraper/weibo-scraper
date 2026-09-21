@@ -350,17 +350,38 @@ class _BrowserSession:
         return kwargs
 
     def _install_visitor_cookies(self) -> None:
-        """Mint a visitor cookie over HTTP and hand it to the browser.
+        """Give the session a visitor cookie.
 
-        Done through `requests` rather than by navigating the handshake,
-        because the handshake is two requests and a JSONP unwrap — driving
-        it in a page means evaluating the site's own script and reading a
-        global it may rename. The cookies are identical either way.
+        Two routes, because the right one depends on WHERE the browser is.
 
-        Through the SAME proxy as the browser: a cookie minted from one
-        exit and replayed from another is the mismatch §8 warns about, and
-        it is free to avoid here.
+        LOCAL browser: mint over HTTP through the same proxy the browser
+        uses, and install the jar. One POST and one GET, cheaper and more
+        reliable than driving the handshake through a page.
+
+        REMOTE browser (--cdp-endpoint): navigate it to weibo.com and let
+        the SITE run its own handshake. Weibo bounces a cookie-less session
+        to `passport.weibo.com/visitor/visitor`, which sets SUB in that
+        browser, from that browser's address.
+
+        That distinction is the whole point and it was got wrong first.
+        The original code minted over HTTP for the remote case too, with no
+        proxy — so the cookie was issued to this machine and replayed from
+        the Scraping Browser's exit. Measured 2026-09-21 in one session:
+
+            the remote browser leaves from  23.244.216.86  California, US,
+                                            AS11776 Breezeline (residential)
+            the HTTP handshake leaves from  65.108.17.126  Helsinki, FI,
+                                            AS24940 Hetzner (datacenter)
+
+        CLAUDE.md §8: cookies a bot manager issued against exit A and
+        replayed from exit B are a stronger signal than either address
+        alone. And it threw away what the Scraping Browser is bought for —
+        the cookie IS the session identity, and it was being minted on the
+        cheap address while the expensive one carried the requests.
         """
+        if self.remote:
+            self._mint_in_browser()
+            return
         try:
             jar = W.mint_visitor_cookies(
                 user_agent=self.user_agent,
@@ -375,6 +396,25 @@ class _BrowserSession:
             return
         self.context.add_cookies(W.cookies_for_browser(jar))
         log.info("[+] visitor cookies installed in the browser")
+
+
+    def _mint_in_browser(self) -> None:
+        """Let the site hand the REMOTE browser its own visitor cookie."""
+        try:
+            self.page.goto(LANDING_URL, wait_until="domcontentloaded",
+                           timeout=NAV_TIMEOUT_MS)
+            self.page.wait_for_timeout(4000)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[!] could not run the visitor handshake in the "
+                        "remote browser: %s", _mask(exc)[:140])
+            return
+        names = {c.get("name") for c in self.context.cookies()}
+        if "SUB" in names:
+            log.info("[+] visitor cookie minted BY the remote browser, from "
+                     "its own exit (%d cookies)", len(names))
+        else:
+            log.warning("[!] the remote browser finished the handshake with "
+                        "no SUB cookie — cookies present: %s", sorted(names))
 
     def remint_visitor(self) -> None:
         self._install_visitor_cookies()

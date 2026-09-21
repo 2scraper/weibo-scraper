@@ -597,6 +597,54 @@ BAD_REQUEST = FIXTURES["bad_request"]
 # anything is being challenged.
 SERVED_HTML = "<!doctype html>\n<html lang=\"zh-cn\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <link rel=\"dns-prefetch\" href=\"//h5.sinaimg.cn\" />\n    <meta name=\"viewport\" content=\"width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover\" />\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\" />\n    <meta http-equiv=\"Content-Security-Policy\" content=\"upgrade-insecure-requests\" />\n    <meta content=\"\" name=\"keywords\" />\n    <meta content=\"\" name=\"description\" />\n    <link rel=\"icon\" href=\"https://weibo.com/favicon.ico\" />\n    <link\n      rel=\"stylesheet\"\n      type=\"text/css\"\n      href=\"//h5.sinaimg.cn/m/reward-pc-kits/style.css?version=2.1.5\"\n    />\n    <script src=\"https://js.t.sinajs.cn/static/validate-loader.umd.cjs\"></script>\n    <title>微博</title>\n    <script>\n      if (window.location.protocol !== 'https:') {\n        window.location.href = window.location.href.replace('http:', 'https:');\n      }\n    </script>\n    <script type=\"module\" crossorigin src=\"https://h5.sinaimg.cn/m/weibo-pro-next/assets/index-DArm_q-5.js\"></script>\n    <link rel=\"stylesheet\" crossorigin href=\"https://h5.sinaimg.cn/m/weibo-pro-next/assets/index-BQia-I5S.css\">\n  </head>\n  <body>\n    <script>\n      function scriptLoaded() {\n        if (window.wbBotDetector) {\n          window.wbBotDetector.load({\n            from: 'weibo_pc',\n            isTraceMouse: true,\n            isTraceKeyboard: true,\n            getTimeout: 2000\n          });\n        }\n      }\n    </script>\n    <script\n      src=\"https://passport.sinaimg.cn/js/fp/1.3.2.umd.js\"\n      defer=\"defer\"\n      onload=\"scriptLoaded()\"\n    ></script>\n    <script>\n      try {\n        var CAPTCHA_TYPE = 'yidun';\n        window.CAPTCHA_TYPE = CAPTCHA_TYPE;\n        var dynamicLoader = window.ValidateLoader.dynamicLoader;\n        dynamicLoader\n          .load(CAPTCHA_TYPE)\n          .catch((err) => console.error('Dun preload failed', err));\n      } catch (e) {\n        console.log(e);\n      }\n    </script>\n    <script>\n      window.$VERSION = {\n        CLIENT: 'v1.1.249',\n        SERVER: 'v2026.09.20.1'\n      };\n      try{window.$CONFIG = {\"serverTime\":1789979952798,\"showAriaEntrance\":true,\"enableAria\":true,\"enablePopLogin\":true,\"apmSampleRate\":0.01,\"isNormal\":false,\"flags\":{\"PC_grey\":false,\"trend\":0},\"loginHeader\":{\"poster\":\"https://a.sinaimg.cn/mintra/pic/2112130400/18weibo_login.png\",\"src\":\"https://a.sinaimg.cn/mintra/pic/2112130543/weibo_login.mp4\"}};}catch(e){window.$CONFIG = {};}\n      const s = document.createElement('script');\n      s.src = 'https://i.sso.sina.com.cn/js/qrcode_login_v2.js';\n      document.body.appendChild(s);\n    </script>\n    <div id=\"app\"></div>\n    <script defer src=\"https://static.geetest.com/v4/gt4.js\"></script>\n    <script>\n      try {\n        if (window.$CONFIG.enableAria) {\n          const s = document.createElement('script');\n          s.defer = true;\n          s.src = '//a.sinaimg.cn/mintra/pic/2201111119/wza/aria.js?appid=scrubbed_appid_not_a_credential';\n          document.body.appendChild(s);\n        }\n      } catch (e) {}\n      try {\n        const s = document.createElement('script');\n        s.defer = true;\n        s.src = '//a.sinaimg.cn/mintra/pic/2406250331/48po.js';\n        document.body.appendChild(s);\n      } catch (e) {}\n    </script>\n    <script\n      src=\"//h5.sinaimg.cn/m/reward-pc-kits/sdk.js?version=2.1.5\"\n      defer\n    ></script>\n    <!-- built files will be auto injected  -->\n  </body>\n</html>\n"
 
+# A served weibo.com page AS THE SCRAPING BROWSER DELIVERS IT.
+#
+# Constructed from a measurement rather than pasted verbatim — the profile
+# allows one live connection and was flapping when this was written — but
+# every marker and every count below was taken from a real page fetched
+# through the Scraping Browser on 2026-09-21, alongside a direct fetch of
+# the same URL:
+#
+#     marker                  direct fetch   through the Scraping Browser
+#     captcha                      4                    19
+#     geetest                      1                     2
+#     chrome-extension://          0                    16
+#     hunter.js                    0                     4
+#     turnstile                    0                     3
+#     cf-turnstile                 0                     1
+#     data-ts-input                0                     1
+#
+# The page was 2,566 bytes and Weibo served it perfectly normally. The
+# extra occurrences are 2Captcha's own auto-solve extension injecting its
+# hunters into every page it loads (CLAUDE.md §8, §19).
+#
+# This is why the marker set here excludes the obvious words. Carrying
+# `cf-turnstile`, `turnstile`, `captcha` or `geetest` would make EVERY page
+# fetched through the paid browser read as a challenge — and the earlier
+# counts in this file were all taken from direct fetches, which is exactly
+# the gap §21 names: a guard is only as good as the fixture it runs
+# against, and the fixture that matters is the one fetched the way a real
+# run fetches.
+EXTENSION_INJECTED_PAGE = (
+    '<!doctype html><html lang="zh-cn"><head><meta charset="utf-8"/>'
+    '<script>var CAPTCHA_TYPE = \'yidun\'; window.CAPTCHA_TYPE = CAPTCHA_TYPE;'
+    ' var dynamicLoader = window.ValidateLoader.dynamicLoader;'
+    ' dynamicLoader.load(CAPTCHA_TYPE);</script>'
+    '<script defer src="https://static.geetest.com/v4/gt4.js"></script>'
+    '</head><body><div id="app"></div>'
+    # what the auto-solve extension injects, verbatim in shape
+    '<script src="chrome-extension://kjmkgkdkpedkejedfhmfcenooemhbpbo/'
+    'content/captcha/turnstile/hunter.js" data-ts-input="cf-turnstile-response">'
+    '</script>'
+    '<script src="chrome-extension://kjmkgkdkpedkejedfhmfcenooemhbpbo/'
+    'content/captcha/recaptcha/hunter.js"></script>'
+    '<script src="chrome-extension://kjmkgkdkpedkejedfhmfcenooemhbpbo/'
+    'content/captcha/hcaptcha/hunter.js"></script>'
+    '<script src="chrome-extension://kjmkgkdkpedkejedfhmfcenooemhbpbo/'
+    'content/captcha/geetest/hunter.js"></script>'
+    '</body></html>')
+
+
 ENGINES = ("playwright_scraper", "puppeteer_scraper", "selenium_scraper")
 # Every shared module an engine may call into. `fingerprint_client` and
 # `captcha_solver` were missing from this tuple, and the binding check is
@@ -1043,7 +1091,7 @@ def test_no_marker_fires_on_a_good_payload():
     import product_parser as P
     good = [json.dumps(HOT), json.dumps(USER), json.dumps(PROFILE),
             json.dumps(COMMENTS), json.dumps(SHOW), json.dumps(LONGTEXT),
-            SERVED_HTML]
+            SERVED_HTML, EXTENSION_INJECTED_PAGE]
     for payload in good:
         got = P.detect_bot_challenge(payload)
         eq(got, None, f"no marker fires on a served payload (got {got!r})")
@@ -1076,6 +1124,41 @@ def test_both_captcha_vendors_are_preloaded_on_a_good_page():
               f"the served-page fixture still carries {needle!r}")
     eq(P.detect_bot_challenge(SERVED_HTML), None,
        "and NONE of them makes a served page look like a challenge")
+
+
+def test_no_marker_fires_on_a_scraping_browser_page():
+    """The fixture §21 says actually matters.
+
+    2Captcha's Scraping Browser ships an auto-solve extension that injects
+    its own hunters into every page it loads, so a page Weibo served
+    normally arrives carrying `cf-turnstile`, `turnstile`, `hunter.js` and
+    `chrome-extension://` — and `captcha` jumps from 4 occurrences to 19.
+    See EXTENSION_INJECTED_PAGE for the measured table.
+
+    Every earlier marker count in this file came from a DIRECT fetch, which
+    carries none of that. A marker set validated only against those would
+    pass here and then call every paid-browser page a challenge.
+    """
+    import product_parser as P
+    page = EXTENSION_INJECTED_PAGE
+    for injected, least in (("cf-turnstile", 1), ("turnstile", 1),
+                            ("chrome-extension://", 4), ("hunter.js", 4),
+                            ("data-ts-input", 1), ("captcha", 4)):
+        check(page.lower().count(injected) >= least,
+              f"the fixture still carries the injected {injected!r}")
+    eq(P.detect_bot_challenge(page), None,
+       "NOTHING in the marker set matches what the auto-solve extension "
+       "injects — otherwise every page fetched over --cdp-endpoint reads "
+       "as a challenge")
+
+    # And the corollary CLAUDE.md §8 draws: with no marker matching an
+    # injection, the extension-tag STRIP that older repos carry would be
+    # dead code here. Pinned so nobody adds it back as a precaution.
+    for name in ENGINES:
+        src = open(os.path.join(HERE, f"{name}.py"), encoding="utf-8").read()
+        check("chrome-extension://" not in src,
+              f"{name} carries no extension-tag strip — it would be dead "
+              "code, because no marker in the set matches an injection")
 
 
 def test_the_inverted_markers_stay_out():
