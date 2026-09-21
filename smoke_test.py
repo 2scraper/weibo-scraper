@@ -947,6 +947,60 @@ def test_classifier():
         eq(F.classify(body, status), want, f"classify: {label}")
 
 
+def test_the_visitor_gate_asks_for_a_cookie_not_for_an_account():
+    """The cold first page must mint, not retry blindly and not report a block.
+
+    Every HTML route on weibo.com bounces a cookie-less session to
+    passport's visitor page. That is a free handshake, so it has to
+    classify as `needs_visitor` — retryable, NOT blocked, and the state
+    that triggers the mint.
+
+    Pinned because the first version got it wrong in a way nothing caught:
+    `_LOGIN_PROSE` looked for `passport.weibo.com/visitor`, a string that
+    never appears in the gate's BODY (the host is in the URL). Counted on
+    the real 9,486-byte gate, 2026-09-21: `visitor/visitor` x4,
+    `Sina Visitor System` x1, `weibo.com/login` x1, and the string the
+    regex wanted x0. So the page classified as `unknown` and a run that
+    had lost its cookie would have retried blindly instead of minting one.
+
+    `detect_bot_challenge` had the right spellings the whole time, so the
+    two detectors disagreed about the same page — CLAUDE.md §19.
+    """
+    import page_flow as F
+    import product_parser as P
+
+    # The gate's own shape, kept to the parts that decide the answer.
+    GATE = ('<!DOCTYPE html><html><head>'
+            '<meta http-equiv="Content-type" content="text/html; charset=utf-8"/>'
+            '<title>Sina Visitor System</title></head><body>'
+            '<span id="message"></span><script type="text/javascript">'
+            # NOT the full host: the real gate carries `visitor/visitor`
+            # four times and `passport.weibo.com/visitor` ZERO times,
+            # because the host lives in the URL and not in the body. A
+            # fixture that carried it would match the very spelling this
+            # check exists to prove is absent — and did, silently, until
+            # the control was run (CLAUDE.md §21).
+            'var url = "/visitor/visitor";'
+            'function getTid(){ return tid; }'
+            'location.href = "https://weibo.com/login.php";'
+            '</script></body></html>')
+
+    state = F.classify(GATE, 200, "https://weibo.com/")
+    eq(state, "needs_visitor", "the cold visitor gate asks for a cookie")
+    check(F.should_retry(state), "and is retryable")
+    check(not F.counts_as_blocked(state),
+          "and is NOT exit 3 — a free handshake is not a refusal, and "
+          "reporting one sends a reader hunting for a proxy problem")
+    check(F.needs_visitor_cookie(state), "and is the state that mints")
+    check(not F.should_solve(state), "and never pays for a solve")
+
+    # Both detectors must agree about this page.
+    check(P.detect_bot_challenge(GATE) is not None,
+          "the marker set also recognises the gate — the two detectors "
+          "disagreeing about one page is how the classifier's missing "
+          "spelling stayed invisible")
+
+
 def test_chromium_error_page_is_not_a_block():
     """CLAUDE.md §18's inverted-detection case.
 

@@ -145,12 +145,29 @@ def wait_for_count(count: Callable[[str], int], selector: str, minimum: int,
 # Classification
 # ---------------------------------------------------------------------------
 
-# The site's own "please log in" prose, as it appears on the 403. Matched as
-# a SECONDARY signal only: the `ok` field and the status code are what carry
+# The site's own "please log in" prose, and the visitor gate's own title.
+#
+# The spellings are MEASURED off the pages rather than guessed, because the
+# first version guessed wrong: it looked for `passport.weibo.com/visitor`,
+# which never appears in the gate's BODY — the host is in the URL. So a
+# cold session's very first page classified as `unknown` instead of
+# `needs_visitor`, and a run that had lost its cookie would have retried
+# blindly rather than minting a new one. Counted on the real gate
+# (9,486 bytes, 2026-09-21): `visitor/visitor` x4, `Sina Visitor System`
+# x1, `weibo.com/login` x1, `passport.weibo.com/visitor` x0.
+#
+# `detect_bot_challenge` had the right spellings all along, so the two
+# detectors disagreed about the same page — CLAUDE.md §19: when a static
+# and a live detector disagree, the one missing a spelling is usually the
+# static one.
+#
+# Matched as a SECONDARY signal only: the `ok` field and the status code are what carry
 # the decision, because prose is translated, reworded and — in this case —
 # actively misleading. "前方有点拥堵" means "it is a bit congested ahead",
 # which describes a capacity problem the site does not have.
-_LOGIN_PROSE = re.compile(r"请登录|登录后使用|sso/signin|passport\.weibo\.com/visitor")
+_LOGIN_PROSE = re.compile(
+    r"请登录|登录后使用|sso/signin|weibo\.com/login"
+    r"|visitor/visitor|Sina Visitor System", re.I)
 
 # Chromium's own network-error page. Not a refusal by the site — the site
 # was never reached — and it wants a different answer from a block: a dead

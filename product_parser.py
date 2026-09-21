@@ -286,6 +286,23 @@ BOT_CHALLENGE_MARKERS = (
 )
 
 # Markers for a challenge Weibo COULD render and was not observed rendering.
+#
+# Anchored on the two vendors the site ACTUALLY loads (CLAUDE.md §18:
+# build the set from what you find on the site). Weibo wires BOTH NetEase
+# Yidun and GeeTest v4 into its own chrome and preloads them on pages it
+# serves normally — counted 2026-09-21 on a profile page behind a visitor
+# cookie: `CAPTCHA_TYPE = 'yidun'` x4, `static.geetest.com/v4/gt4.js` x1,
+# `ValidateLoader` x1; and `yidun` x2 on the login page.
+#
+# So neither vendor's NAME nor its LOADER can be a marker here: both are
+# what a good page fetches. What only a RENDERED widget carries is the
+# runtime vocabulary below, every entry of which counted ZERO across four
+# served pages — the cold visitor gate, a profile behind a cookie, a
+# hot-feed payload and the login page.
+#
+# This replaced four guesses that matched nothing either vendor emits. It
+# is a better-founded CANDIDATE set, not a measurement of a challenge:
+# Weibo rendered none in 21 runs and 55 artefacts.
 # Kept separate from the set above so that `detect_bot_challenge` can name
 # which of the two fired, and so that nobody reads the empty measurement as
 # proof that Weibo has no captcha. It has one — its login page loads GeeTest
@@ -298,10 +315,19 @@ BOT_CHALLENGE_MARKERS = (
 # page: a rendered GeeTest widget carries its own runtime, a served profile
 # page carries only a config key.
 CHALLENGE_MARKERS = (
-    "geetest_challenge",
-    "gt_captcha",
-    "/gt/register",
-    "captcha_module",
+    # GeeTest v4, RENDERED
+    "geetest_holder",
+    "geetest_panel",
+    "geetest_radar",
+    "geetest_slider",
+    "gcaptcha4",
+    # NetEase Yidun, RENDERED
+    "yidun_intelli",
+    "yidun_panel",
+    "yidun-captcha",
+    "necaptcha",
+    "captcha.yidun",
+    "cstaticdun",
 )
 
 
