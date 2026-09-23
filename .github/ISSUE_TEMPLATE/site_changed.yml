@@ -1,5 +1,5 @@
-name: Site changed / selectors broke
-description: Etsy changed something and the parser no longer matches.
+name: Site changed / parser broke
+description: Weibo changed something and the parser no longer matches.
 labels: ["site-change"]
 body:
   - type: markdown
@@ -7,22 +7,25 @@ body:
       value: |
         This is the most common way a scraper stops working, and it is worth its
         own report because the fix is different from a code bug: something on
-        etsy.com moved.
+        weibo.com moved.
 
-        Useful to know before filing: the parser tries **JSON-LD first**, then a
-        CSS + URL-pattern fallback. Which one broke narrows the fix a lot.
+        Useful to know before filing: this repo parses **no HTML**. Every mode
+        reads the JSON that Weibo's own front end fetches from `/ajax/`
+        endpoints (`/ajax/feed/hottimeline`,
+        `/ajax/profile/getWaterFallContent`, `/ajax/statuses/buildComments`,
+        and `/ajax/statuses/longtext` for truncated bodies). Which endpoint and
+        which field changed narrows the fix a lot.
 
   - type: dropdown
     id: what_broke
     attributes:
       label: What stopped matching
       options:
-        - Products (0 rows on a page that visibly has products)
-        - A specific field is null or wrong (price, sku, image, URL)
-        - original_price or lowest_price_30d empty out (the tile overlay)
-        - DOM price confirmation dropped below 90% in the run log
-        - Pagination stops early or repeats a page
-        - The captcha detector finds nothing on a page that has one
+        - Rows (0 rows from an account or post that visibly has content)
+        - A specific field is null or wrong (text, counts, author, region, media)
+        - Post bodies cut off at about 150 characters (`text_source` / `text_truncated`)
+        - The cursor stops early or repeats a page in --mode user or --mode post
+        - The visitor handshake fails (`needs_visitor` on every attempt)
         - Something else
     validations:
       required: true
@@ -30,22 +33,22 @@ body:
   - type: input
     id: url
     attributes:
-      label: URL
-      description: The exact listing URL, and the country your exit IP was in.
-      placeholder: "https://www.etsy.com/search?q=handmade+mug (locale: /de/, exit IP: DE residential, Scraping Browser pid: etsy1)"
+      label: URL and mode
+      description: The exact URL, the --mode, and where your exit IP was.
+      placeholder: "--mode user --url https://weibo.com/u/2803301701 (exit IP: FI datacentre)"
     validations:
       required: true
 
   - type: textarea
     id: evidence
     attributes:
-      label: Evidence from the page
+      label: Evidence
       description: |
         Whichever of these you can get. A capture beats a description.
 
-        - JSON-LD as the page actually serves it:
-          `python3 -c "import json,sys,re;h=open('dump.html').read();print([m[:400] for m in re.findall(r'<script type=\"application/ld\\+json\">(.*?)</script>',h,re.S)][:2])"`
-        - Or open devtools and paste one `Product` node from the `ItemList`.
+        - The `--dump-html PATH` snapshot: the exact bytes the parser was given.
+        - The endpoint's JSON as devtools shows it (Network tab, the `/ajax/`
+          request), trimmed to one post.
         - For a field problem: the value you got, and the value on the page.
       render: text
     validations:
@@ -57,4 +60,4 @@ body:
       label: Anything else
       description: >-
         Whether it reproduces on a second engine, whether it reproduces from a
-        different country, and when it last worked.
+        different exit, and when it last worked.

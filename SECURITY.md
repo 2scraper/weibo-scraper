@@ -53,9 +53,9 @@ In scope:
 
 Not because these do not matter, but because they belong somewhere else:
 
-- **Bypassing Weibo's login wall.** This scraper drives an ordinary
-  browser and passes challenges the way a browser does. Anything about how
-  Cloudflare behaves is not a vulnerability in this repository.
+- **Bypassing Weibo's login wall.** This scraper reads only what Weibo
+  serves an anonymous visitor, and does not log in. Anything about how Weibo
+  gates its routes is not a vulnerability in this repository.
 - **The scraper stopped working.** Weibo changing its JSON is expected —
   file it as a normal issue, there is a template for exactly that.
 - **Anything about 2Captcha's services** — the solver API, the Scraping Browser
