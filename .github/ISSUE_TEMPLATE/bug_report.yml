@@ -12,24 +12,21 @@ body:
 
         Two things answer most reports faster than we can:
 
-        - **Everything exit 3?** Check the exit address first. Etsy's
-          DataDome answers every datacentre and VPN IP with HTTP 403, so a run
-          from a VPS or a CI runner is blocked whatever else is set. If the
-          log says `t=bv`, a captcha key does not help — that challenge is
-          not solvable. The Scraping Browser API (`--cdp-endpoint`) is the
-          path that works; if a profile keeps refusing after three retries,
-          try a different `pid`.
-        - **Zero products?** You may be on a page that has none — a taxonomy
-          hub, or one page past the end of a listing. It answers 200 with
-          nothing on it, which is exit 4 and a correct answer. See
-          [TROUBLESHOOTING.md](../blob/main/TROUBLESHOOTING.md).
-        - **`rating` empty on every row?** That is expected on a listing run:
-          Etsy publishes no per-listing rating there. The stars you see on a
-          tile are the shop's and are in `shop_rating`. See the README.
-        - **Wrong currency or language?** Etsy decides both from your exit
-          IP, not from the URL — a request for `/fr/…` from a German exit is
-          redirected to `/de/…`. The row's `url` says which storefront
-          actually answered.
+        - **Everything exit 3?** Read which state the log names. A
+          `login_wall` (HTTP 403, `请登录后使用`) wants an ACCOUNT, and no
+          proxy, exit country or captcha key changes it — this repo does not
+          implement login. The three modes here needed none of those,
+          measured from a datacentre address; see the README.
+        - **HTTP 403 with 21 bytes, `{"error":"Forbidden"}`?** That is an
+          `/ajax/` URL fetched as a top-level navigation, which Weibo
+          declines. It is the wrong kind of request, not a block. It is also
+          what `scraper_api_client.py` gets on these URLs, measured.
+        - **Zero rows?** A hot feed, account or post that holds nothing
+          answers with an empty list, which is exit 4 and a correct answer.
+        - **Fewer posts than the account claims in `--mode user`?** The
+          cursor walk ends where the site says `-1`, and the sidecar records
+          `statuses_claimed` beside `products` for that reason. See the
+          README.
 
   - type: dropdown
     id: engine
@@ -62,9 +59,10 @@ body:
     attributes:
       label: Exit code
       description: >-
-        `echo $?` straight after the run. These mean specific things — 3 is a
-        challenge page, 4 is "ran fine, found nothing", 124 is a self-imposed
-        timeout. The table is in the README.
+        `echo $?` straight after the run. These mean specific things — 3 is
+        blocked (on Weibo, usually a login wall), 4 is "ran fine, found
+        nothing", 5 is "the content was never obtained". The table is in the
+        README.
       placeholder: "4"
     validations:
       required: true
@@ -77,8 +75,8 @@ body:
       render: shell
       placeholder: |
         python3 playwright_scraper.py \
-          --url "https://www.etsy.com/search?q=handmade+mug" \
-          --pages 3 --out grills
+          --mode user --url "https://weibo.com/u/2803301701" \
+          --pages 3 --out weibo_posts
     validations:
       required: true
 
@@ -98,7 +96,7 @@ body:
     attributes:
       label: What you expected instead
       placeholder: >-
-        96 products, as the README says a category page yields.
+        The posts the account's page shows, with their full text.
     validations:
       required: true
 

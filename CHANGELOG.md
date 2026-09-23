@@ -8,6 +8,35 @@ as a CLI toolkit can. A PATCH release means fixes; it does not mean every
 flag and default is frozen, and where a default changes in one, the release
 notes lead with it.
 
+## [Unreleased]
+
+### Fixed — text and code carried over from the donor repo (bbb-scraper)
+
+- `diff_runs.py` diffed BBB's columns (`rating_grade`, `city`,
+  `complaints_total`, …), none of which a Weibo row has, so it could never
+  report a change. It now tracks this repo's own columns (body, engagement
+  counts, author, region, media) and reports a body difference that comes
+  with a `text_source` difference as `source_changed`. BBB's sort and
+  225-row-cap refusals, which could not fire here, are gone; a hot-feed run
+  now carries a note that its `added`/`removed` describe the feed re-rolling.
+  The `--help` description named bbb-scraper.
+- `scraper_api_client.py` logged "BBB did not serve the Scraper API's
+  request", with BBB's measurements, behind a check for a `"blocked"` state
+  this repo's `page_flow` does not define. It now fires on any state the
+  policy counts as blocked and names Weibo's login wall.
+- `captcha_solver.py`: the docstring and the "what is not here" note
+  described BBB's Cloudflare gate. They now describe what was measured here.
+- `CONTRIBUTING.md` was about BBB throughout (markup anchors, sort, page cap,
+  Cloudflare markers, forms). Rewritten for this repo from the README.
+- Issue templates described Etsy (DataDome, currency by exit IP, an etsy.com
+  example URL) and linked a `TROUBLESHOOTING.md` this repo does not have.
+- `claude.yml` / `claude-code-review.yml` told you to set the secret on
+  `2scraper/bbb-scraper`; `.dockerignore` listed `bbb_businesses.*` instead
+  of this repo's `weibo_posts.*`; the Dockerfile example wrote to
+  `/out/restaurants`; `SECURITY.md` mentioned Cloudflare.
+- README: the release badge is removed, since no release has been published
+  on GitHub yet.
+
 ## [0.1.0] — 2026-09-21
 
 First release. Three modes, three engines, all run live against weibo.com.

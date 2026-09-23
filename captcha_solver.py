@@ -6,15 +6,15 @@ Shared helper used by all three scrapers (Playwright / Selenium / Puppeteer).
 Detection runs after EVERY page navigation in the main loop of all three
 scrapers, regardless of what URL was requested (category hub, product page,
 sign-in, checkout, anything) — this is deliberate, not scoped to any one
-page. If BBB renders a reCAPTCHA challenge anywhere — account, sign-in and
-review-submission flows are the usual places — this fires.
+page. If Weibo renders a captcha challenge anywhere, this fires.
 
-**BBB's own gate is Cloudflare Turnstile, not reCAPTCHA.** Measured
-2026-09-16: a Managed Challenge carries `cf_chl_opt` and a Turnstile widget,
-and the pages this scraper reads carry no reCAPTCHA at all rather than
-an interstitial. So this module is a contingency, not part of the happy path
-— a bot manager can be switched on between deploys, and a scraper that
-cannot name what stopped it is much harder to fix.
+**No challenge was rendered on any route this repo reads** — five captures,
+zero widgets, zero challenge iframes. Weibo does have two captchas wired into
+its ordinary page chrome (`CAPTCHA_TYPE = 'yidun'`, NetEase Yidun, and the
+GeeTest v4 loader `static.geetest.com/v4/gt4.js`), preloaded on pages served
+perfectly normally. So this module is a contingency, not part of the happy
+path — a challenge appearing on these routes later would be a change in the
+site, and a scraper that cannot name what stopped it is much harder to fix.
 
 Detection therefore stays BROAD (which challenge a visitor meets depends on
 the exit and on what the address has been doing) while spending stays
@@ -708,25 +708,20 @@ solve_recaptcha_v3 = solve_recaptcha
 # The sibling repo in this family carries a whole second solver for its
 # site's OWN first-party image captcha ("Enter the characters you see below",
 # a JPEG of distorted text and a GET form). Roughly 190 lines of it, and none
-# of it is ported here, because BBB has no such page.
+# of it is ported here, because Weibo has no such page.
 #
-# What BBB does instead is refuse in two shapes, and only ONE of them is
-# something a solver can answer. Measured 2026-09-16:
+# What Weibo does instead is refuse in ways no solver can answer, because
+# nothing is being tested (see the README and page_flow.STATE_POLICY):
 #
-#   "Just a moment..."          a Cloudflare Managed Challenge, ~15 KB, with
-#                               `cf_chl_opt`, `__cf_chl` and a Turnstile
-#                               widget on it. This IS a test, and it is what
-#                               the machinery below is for.
-#   "You have been blocked |    a refusal, ~12.5 KB, with no widget, no
-#    Better Business Bureau(R)"  sitekey and no challenge of any kind. There
-#                               is nothing for a solver to answer.
+#   HTTP 403 `请登录后使用`       a LOGIN wall on `/ajax/statuses/mymblog`,
+#                               `m.weibo.cn` containers and search. It wants
+#                               an account, not a token.
+#   HTTP 403 `{"error":"Forbidden"}`  21 bytes, to a top-level navigation of
+#                               an `/ajax/` URL. The wrong kind of request,
+#                               not a block — the same URL as an XHR is
+#                               served.
 #
-# Both answer HTTP 403 and both wear BBB's own branding in the title, so they
-# are told apart structurally rather than by the title —
-# product_parser.detect_page_state reports the first as "challenge" and the
-# second as "blocked", and page_flow.STATE_POLICY spends on the first and
-# never on the second. From a datacenter address it is the second that
-# arrives, and the answer to it is a different exit rather than a purchase.
+# Neither carries a widget, and page_flow.STATE_POLICY never spends on either.
 #
 # The reCAPTCHA / hCaptcha / Turnstile machinery above IS kept, and that is a
 # deliberate asymmetry rather than an inconsistency. Detection stays broad
