@@ -37,6 +37,9 @@ notes lead with it.
 - README: the release badge is removed, since no release has been published
   on GitHub yet.
 
+- `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
+  that does not exist in this repo (it came with the copied core). Removed.
+
 ## [0.1.0] — 2026-09-21
 
 First release. Three modes, three engines, all run live against weibo.com.
