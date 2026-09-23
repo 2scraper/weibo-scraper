@@ -8,6 +8,22 @@ as a CLI toolkit can. A PATCH release means fixes; it does not mean every
 flag and default is frozen, and where a default changes in one, the release
 notes lead with it.
 
+## [Unreleased]
+
+### Fixed
+- **The Scraper API engine failed on every `--wait-text` / `--wait-element` /
+  `--wait-state` call, and was billed for it.** It sent `waitFor` as a
+  JSON-encoded string; measured 2026-09-23 the live API answers that with
+  HTTP 422 "params.waitFor must be an object" and still charges $0.0005,
+  while the same request with an object is answered 200. It is now sent as
+  an object. **And the target site's status was never seen:** the client
+  read the response's `status`, which is the API's own verdict string
+  ("success"), instead of `http_code`, the target's HTTP status — so a
+  target 403/503 reached the page classifier as "success". It now reads
+  `http_code` (falling back to `status` only if that is an int). A
+  regression check drives the real `fetch_html` with `requests.post`
+  stubbed.
+
 ## [0.1.0] — 2026-09-21
 
 First release. Three modes, three engines, all run live against weibo.com.
