@@ -40,36 +40,37 @@ not the check caught it.
 
 ## Reporting a site change
 
-BBB changing its markup is the normal way this stops working, and it has its
+Weibo changing its JSON is the normal way this stops working, and it has its
 own issue template. The detail that saves the most time is WHICH anchor
 broke — and on this site that is not a CSS selector, because the parser does
 not read the DOM.
 
-BBB embeds its own state in every page, and on a listing page that state
-holds the site's `/api/search` response verbatim:
+Weibo's front end renders nothing server-side and fetches everything from
+`/ajax/` endpoints, and every mode here reads that JSON as an XHR from a
+context that has loaded `https://weibo.com/` once:
 
 ```
-window.__PRELOADED_STATE__ = {"user": …, "page": …, "searchResult": {…}}
+--mode hot    /ajax/feed/hottimeline
+--mode user   /ajax/profile/getWaterFallContent   (+ /ajax/profile/info)
+--mode post   /ajax/statuses/buildComments
+              /ajax/statuses/longtext             for every truncated post
 ```
 
-So there are only four things that can break, and each fails loudly:
+So there are only a few things that can break:
 
-1. **The `__PRELOADED_STATE__` assignment.** If it is renamed,
-   `extract_preloaded_state` returns None, `parse_listing` logs "no listing
-   payload found" and the run reports 0 rows and exit 4. Loud.
-2. **`searchResult` / `businessProfile`**, the two keys that say which kind
-   of page this is. A rename makes a good page classify as `unknown` rather
-   than as content — which waits and then reports honestly, rather than
-   returning half a file.
-3. **A record's own field names** — `businessName`, `rating`/`ratingScore`,
-   `bbbMember`, `reportUrl`, `tobText`/`tobId`, `location`, `phone`. A rename
-   here is the one that can be QUIET: the row still writes, with that column
-   null. `CORE_FIELDS` in the engines is the guard — a coverage floor of 99%
-   on the five columns BBB filled on 105 of 105 captured records.
-4. **The `/api/search` endpoint itself.** If it starts requiring a key or
-   goes behind Cloudflare, the README's central claim — that the listing
-   modes need no account — stops being true, and the canary is what will say
-   so, because it runs with no secrets from a datacenter runner.
+1. **The visitor handshake** against `passport.weibo.com`
+   (`weibo_api.py`). If it stops minting a cookie, every fetch classifies
+   as `needs_visitor`, retries, and the run ends with nothing. Loud.
+2. **An endpoint's path or envelope** — the `ok` field and the list the
+   posts sit in. A change makes a good payload classify as `unknown`, which
+   waits and then reports honestly, rather than returning half a file.
+3. **A post's own field names** — `mblogid`, `text_raw`, `isLongText`,
+   `reposts_count`, `comments_count`, `attitudes_count`, `region_name`,
+   `user`. A rename here is the one that can be QUIET: the row still writes,
+   with that column null.
+4. **The long-text endpoint.** If it stops answering, flagged posts keep
+   their ~150-character `text_raw` and `text_source` reads
+   `longtext_failed` — the column says so, but only if someone looks.
 
 If you are reporting a break, say which of those four it is, and attach the
 `--dump-html` snapshot. The exact bytes are the only way to tell a parsing
@@ -97,14 +98,11 @@ history needs a decision, not a red check on every push.
 
 Then the rest of the presentation, in the order that matters:
 
-1. `python3 smoke_test.py` green, and the canary dispatched at least once —
-   including its SKIP branch, which is what runs when the
-   `BBB_CDP_ENDPOINT` secret is absent. Note that the canary's LISTING job
-   runs daily with no secrets at all and is expected to be green — that half
-   needs no credentials, and a green badge there is exactly the claim the
-   README makes. Only the PROFILE job skips without a secret, because it
-   fetches a Cloudflare-gated page and a GitHub runner is a datacenter
-   address.
+1. `python3 smoke_test.py` green, and the canary dispatched at least once.
+   Both of its jobs (the hot feed, and user + comments) run daily with no
+   secrets at all and are expected to be green — the README's central claim
+   is that these modes need no account, key or proxy, and a green badge is
+   that claim under test.
 2. The repo description, homepage and topics set (see the family notes on
    what those should say).
 3. Only then the row in the org profile README — and check it with an
@@ -118,69 +116,35 @@ Then the rest of the presentation, in the order that matters:
 file of plain functions with inline HTML/JSON fixtures — no pytest, no
 conftest, no fixtures directory. Copy the nearest existing check and edit it.
 
-Six properties in this repo exist because they were once absent or were
-measured against expectation, and cost real time. Tests pin all six, so a PR
-that breaks one will fail rather than silently regress:
+Some properties in this repo exist because they were once absent or were
+measured against expectation, and cost real time. Tests pin them, so a PR
+that breaks one will fail rather than silently regress. The README's "Traps
+that look like bugs" section has the measurements behind each:
 
-- **`sku` is `{bbbId}_{businessId}_{addressId}` and identifies a business AT
-  A LOCATION.** "AV Brad Construction LLC" came back twice on one page of
-  fifteen with the same `businessId` and two different address ids — two real
-  locations, not a duplicate. Deduping on `businessId` would delete data the
-  site published. A profile row REBUILDS the same sku from parts, because
-  BBB's profile object states its own id as `0_209366` with a literal zero
-  where the listing writes the bbbId.
-- **An ungraded business is null, not zero.** `rating: ""` with
-  `ratingScore: 0.0` means BBB has not graded it — 7 of 105 measured rows —
-  and writing that zero through drags every average a consumer computes. The
-  same trap exists one object deeper on a profile:
-  `averageOfReviewStarRatings` is 0 on a business with no reviews, and BBB
-  carries its own `displayAverageOfReviewStarRatings` flag for it.
-- **`--sort` defaults to `a-z`, not to the site's own default**, and it is a
-  COLUMN rather than only a sidecar field. Measured: `best-match` returned
-  15/15 BBB Accredited businesses and not one match for the query, while
-  `a-z` returned 0/15 accredited and real matches. The ordering decides
-  WHICH businesses are in the file, so two runs that differ on it are not
-  comparable and `diff_runs.py` refuses them.
-- **A complete run can be a 1.2% sample.** BBB caps every query at 15 pages
-  of 15 however many it matched, and page 16 answers HTTP 500 rather than an
-  empty page. Runs PLAN against the `totalPages` the site states on page 1
-  and the sidecar records `total_results`, `pages_available`,
-  `capped_by_site` and `reachable_max`.
-- **A block is not a challenge here, and only one of the two is solvable.**
-  BBB answers a refused request either with a Managed Challenge (`cf_chl_opt`
-  plus a Turnstile widget — a real test) or with a hard "You have been
-  blocked" page carrying no widget at all. Both are HTTP 403 and both wear
-  BBB's own branding in the `<title>`, so they are told apart structurally.
-  `page_flow.STATE_POLICY` spends on the first and NEVER on the second.
-- **A marker that matches every page is worse than no marker**, and this
-  list has already been wrong once. `challenge-platform` and `cdn-cgi`
-  appear on pages BBB serves normally — counted on its own 404 — so neither
-  is in `BOT_CHALLENGE_MARKERS`. Neither is **`cf-turnstile`**, which is the
-  obvious marker for a Turnstile and is measured useless here for a reason
-  that has nothing to do with BBB: 2Captcha's own Scraping Browser
-  auto-solve extension injects its hunters into every page it loads, so
-  `cf-turnstile` fired on **five of five** pages fetched that way and on only
-  one of the two real challenges. And `/turnstile/v0/api.js` fired on nothing
-  at all, served or refused — dead weight, removed.
-
-  What discriminates is the challenge's own vocabulary (`cf_chl_opt`,
-  `__cf_chl`, `cf-chl-`, `challenges.cloudflare.com` — 0 on every served
-  page) and, positively, whether the page was built out of `assets.bbb.org` /
-  `m.bbb.org`.
-
-  `smoke_test.py` pins all of it in both directions: no marker may appear on
-  a served page (checked against a listing fetched THROUGH the Scraping
-  Browser, which is the fixture that exposed the mistake), every marker must
-  fire on a real challenge, and the three excluded strings must really be
-  present on a served page — or excluding them would be a precaution against
-  nothing.
-
-- **BBB has its own captcha, and it is not the one above.** Every served page
-  carries a reCAPTCHA **Enterprise** configuration
-  (`NEXT_PUBLIC_GOOGLE_RECAPTCHA_SITE_KEY`, `recaptcha/enterprise.js?render=…`)
-  for its review and complaint forms. `render=<sitekey>` means v3/Enterprise,
-  not a v2 checkbox — worth knowing before anyone pays for the wrong task
-  type. This scraper never touches those forms.
+- **`text_raw` is not the post.** A post whose `isLongText` is true arrives
+  cut off at about 150 characters, with nothing in the field saying so.
+  `/ajax/statuses/longtext` is fetched for every flagged row and
+  `text_source` records which read produced `title`. When the endpoint
+  answers "there is no more text", the row is whole, not truncated.
+- **`number_display_strategy` is not a count.** It reads `100万+` on every
+  post, including posts with 18 likes — the site's display rule, not a
+  figure. Only the integer counters are read.
+- **An `/ajax/` URL fetched as a navigation answers 403 with 21 bytes.** The
+  same URL as an XHR is served. That is `bad_request` in
+  `page_flow.STATE_POLICY` — not retried, not blocked.
+- **The hot feed does not paginate.** It answers `max_id: 1` to every
+  request and re-rolls its contents, so `--pages N` in `--mode hot` is N
+  fetches of a moving feed, recorded as `feed_rerolled: true`, and
+  `--concurrency` above 1 is refused.
+- **A complete user run is not the account's archive.** The cursor ends
+  where the site says `-1`, and the sidecar records `statuses_claimed`
+  beside `products`.
+- **A login wall is not a challenge.** HTTP 403 with `请登录后使用` wants an
+  account; `STATE_POLICY` never retries it and never spends on it. And the
+  captcha words are not markers here: `CAPTCHA_TYPE`, `geetest` and `yidun`
+  appear on pages served perfectly normally, and the Scraping Browser's
+  auto-solve extension adds more. The block detection keys on the site's
+  own `ok` field and HTTP status instead.
 
 Plus the family's own invariants, which are not negotiable:
 
@@ -202,41 +166,32 @@ Plus the family's own invariants, which are not negotiable:
 
 Most do not — the suite covers the parser, the writers, the captcha classifier
 and the CLI contract against inline fixtures. If yours genuinely needs
-bbb.org, say in the PR what you ran, which mode and URL, from which exit,
-and what you got — including the sidecar's `total_results`,
-`pages_available` and `sort_applied`, and the coverage lines the run prints.
+weibo.com, say in the PR what you ran, which mode and URL, from which exit,
+and what you got — including the sidecar's `status`, `stop_reason` and, for
+`--mode user`, `statuses_claimed`.
 
-Two things about running this live that are specific to BBB:
-
-* **The listing modes need no exit at all.** They read BBB's own endpoint,
-  which answered a datacenter VPS normally, so "it worked from my laptop" is
-  reproducible here in a way it is not on the sibling repos.
-* **A profile run from a datacenter address gets HTTP 403**, every time — six
-  consecutive polls over 30 seconds returned byte-identical markup. So "the
-  profile mode is broken" from a VPS is not a finding; it is the documented
-  behaviour, and a residential exit or the Scraping Browser is the answer.
+The three modes need no exit at all: they were measured from a datacentre
+address with no proxy and no key, so "it worked from my laptop" is
+reproducible here. A `login_wall` from any address is not a finding — it is
+a route this repo does not read without an account.
 
 **Run more than the primary engine.** "Mirror them exactly" is a design rule,
 not a verification: the first live run of the pyppeteer engine crashed on its
 FIRST fetch on a signature mismatch that four separate offline checks and 400
 green assertions had not caught.
 
-Do not add anything that submits a form. BBB's pages carry a "leave a
-review" flow and a "file a complaint" flow, and this project must never
-touch either — a review or a complaint filed by a scraper is a false record
-about a real business.
+Do not add anything that posts, comments, likes or reposts. This project
+reads; it must never write to Weibo.
 
 ## Scope
 
-This repo scrapes **public pages** on BBB: search results, category listings
-and business profiles, exactly as an anonymous visitor is served them.
+This repo reads what weibo.com serves an anonymous visitor: the public hot
+feed, one account's posts, and one post's comments.
 
-Out of scope: anything behind a login, anything that submits a form
-(including BBB's review and complaint flows), anything that defeats a
-protection rather than passing it the way an ordinary browser does, and the
-named individuals BBB lists as a business's officers — there is deliberately
-no column for them, and adding one is a product decision rather than a bug
-fix.
+Out of scope: anything behind a login, anything that writes to the site,
+and anything that defeats a protection rather than passing it the way an
+ordinary browser does. Account login is a TODO rather than a decision
+against it, but it is a product change, not a bug fix.
 
 ## Licence
 

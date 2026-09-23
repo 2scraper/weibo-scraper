@@ -64,6 +64,7 @@ from typing import Optional
 
 import requests
 
+import page_flow
 import product_parser as P
 from product_parser import (BOT_CHALLENGE_MARKERS,  # noqa: F401
                             detect_bot_challenge, detect_page_state)
@@ -267,19 +268,23 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
             "free visitor cookie and no key.")
         return EXIT_API_ERROR
 
-    if state == "blocked":
+    # Any state the shared policy counts as blocked (on Weibo that is the
+    # login wall and a rendered challenge), not a literal "blocked" state:
+    # page_flow.STATE_POLICY has no state of that name, so a string
+    # comparison here could never fire.
+    if page_flow.counts_as_blocked(state):
         dump = f"{args.out}_scraperapi_debug.html"
         with open(dump, "w", encoding="utf-8") as f:
             f.write(html)
         logger.error(
-            "BBB did not serve the Scraper API's request (upstream HTTP %s, "
-            "%d bytes) — saved to %s. Measured 2026-09-16 on this exact URL: "
-            "the Scraper API's own exits are datacenter addresses and BBB "
-            "refuses them (403, 12,889 bytes), while the SAME task routed "
-            "through a Scraping Browser session returned 200 and 113,389 "
-            "bytes with the profile parsing in full. Pass --cdp-url. This is "
-            "exit 3, distinct from an empty result (exit 4).",
-            upstream_status, len(html), dump)
+            "Weibo did not serve the Scraper API's request (upstream HTTP %s, "
+            "%d bytes, state %r) — saved to %s. A 'login_wall' wants an "
+            "account, which this repo does not implement, and no exit "
+            "address changes it; a 'challenge' was never observed on any "
+            "route this repo reads, so it is worth an issue. This is exit "
+            "3, distinct from an empty "
+            "result (exit 4).",
+            upstream_status, len(html), state, dump)
         return 3
 
     vendor = detect_bot_challenge(html)
