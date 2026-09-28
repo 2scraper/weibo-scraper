@@ -4,8 +4,7 @@
 #
 #   docker build -t weibo-scraper .
 #   docker run --rm -v "$PWD/out:/out" weibo-scraper \
-#     --mode hot --pages 3 \
-#     --pages 3 --out /out/restaurants
+#     --mode hot --pages 3 --out /out/weibo_posts
 #
 # Pass --proxy/--twocaptcha-key the same way as running locally, or mount a
 # .env at /app/.env — nothing here bakes in a credential.

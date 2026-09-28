@@ -11,7 +11,7 @@ __pycache__/
 .venv/
 venv/
 env/
-bbb_businesses.*
+weibo_posts.*
 *_debug.html
 *_debug.png
 live_results/

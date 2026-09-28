@@ -5,47 +5,47 @@ diff_runs.py
 Compares two output files from this project (JSON, as written by
 output_writer.save) and reports what changed between them, keyed on `sku`.
 
-    python3 diff_runs.py --old restaurants.2026-09-01.json \\
-                          --new restaurants.2026-09-07.json
+    python3 diff_runs.py --old weibo_posts.2026-09-20.json \\
+                          --new weibo_posts.2026-09-21.json
 
-Typical use is a scheduled re-run kept under a dated filename, diffed against
-the previous one:
+Typical use is a scheduled re-run of one account kept under a dated
+filename, diffed against the previous one:
 
-    python3 playwright_scraper.py --text restaurants --location "New York, NY" \\
-        --out "restaurants_$(date +%F)"
-    python3 diff_runs.py --old "restaurants_$(ls -t restaurants_*.json | sed -n 2p)" \\
-                          --new "restaurants_$(date +%F).json" --out diff.json
+    python3 playwright_scraper.py --mode user \\
+        --url https://weibo.com/u/2803301701 --out "user_$(date +%F)"
+    python3 diff_runs.py --old "$(ls -t user_*.json | grep -v meta | sed -n 2p)" \\
+                          --new "user_$(date +%F).json" --out diff.json
 
-Four buckets, each keyed on sku:
+Four buckets, each keyed on sku (the post's mblogid, or the comment id in
+`--mode post`):
 
   added          — sku present in --new, absent from --old
-  removed        — sku present in --old, absent from --new (closed or removed
-                   from BBB, or just outside this particular query's 225-row
-                   ceiling this time)
-  changed        — sku present in both, with a different letter grade,
-                   accreditation status, address, phone list, category,
-                   website or complaint count. See TRACKED_FIELDS.
-  source_changed — sku present in both, but one row came from a LISTING run
-                   and the other from a PROFILE run, and they differ on a
-                   column only a profile fills. Reported separately because
-                   this says something about our own two snapshots rather
-                   than about the business — and --fail-on-change
-                   deliberately ignores it.
+  removed        — sku present in --old, absent from --new (deleted, or
+                   simply outside how far the cursor walked this time)
+  changed        — sku present in both, with a different text, engagement
+                   count, region or media. See TRACKED_FIELDS.
+  source_changed — sku present in both, but the two rows read the body from
+                   different places (`text_source`: `inline`, `longtext`,
+                   `longtext_failed`) and differ on the body. Reported
+                   separately because a truncated body against a recovered
+                   one says something about our own two snapshots rather
+                   than about the post — and --fail-on-change deliberately
+                   ignores it.
 
 TWO THINGS TO KNOW BEFORE READING A DIFF OF THIS SITE
 -----------------------------------------------------
-**`removed` does not mean closed.** BBB caps every query at 15 pages of 15,
-so a run holds at most 225 of a result set that was 19,016 on one measured
-search. A business can leave the file because the ordering shifted rather
-than because anything happened to it. Two runs are only comparable as a
-CENSUS when both used the same `--sort` and the same query — which is why
-`sort` is a column, and why this tool warns when the two files disagree on it.
+**`--mode hot` is not a census.** The hot feed does not paginate and
+re-rolls its contents on every fetch (`feed_rerolled: true` in the
+sidecar), so `added`/`removed` between two hot runs describe the feed's
+churn, not posts appearing or disappearing.
 
-**`position` and `page` are deliberately not tracked.** BBB's A-Z ordering
-does not break a tie between two locations of one business deterministically:
-measured 2026-09-16, three engines running the identical query returned the
-identical 30 skus with two rows swapped. Diffing position would report churn
-on every run.
+**`removed` in `--mode user` does not mean deleted.** A user run walks a
+cursor until the site says stop, and how far that goes is the account's
+business: the sidecar's `statuses_claimed` sits beside `products` for that
+reason. A post can leave the file because the walk stopped earlier.
+
+`position` and `page` are deliberately not tracked: new posts arriving at
+the top of an account shift every position below them.
 
 A row this project's parser could not recover a sku for (None) cannot be
 matched across runs at all, so it is counted and reported separately rather
@@ -54,55 +54,42 @@ than silently folded into "added"/"removed", which would be wrong on its face.
 
 import argparse
 import json
-import pathlib
 import re
 import sys
 from typing import Dict, List, Optional, Tuple
 
 from output_writer import UNIQUE_BY_SKU_MODES
 
-# What is worth watching on a business directory, and nothing else.
+# What is worth watching on a microblog post, and nothing else.
 #
-# A price monitor's fields are absent because BBB has no prices — porting
-# them would be dead code that looks load-bearing (CLAUDE.md §4). What
-# changes here is a business's STANDING and its CONTACT DETAILS, and those
-# are the two things anyone diffs a directory for.
+# The engagement counters are the integers the site publishes, never the
+# "100万+" display rule beside them (see output_writer.py). `pic_urls`,
+# `topics` and `links` are lists and compare element-wise.
 #
-# `phone` and `service_areas` are lists and compare element-wise, which is
-# what you want: a business adding a second number is a real change.
-#
-# Deliberately NOT tracked: `position` and `page`. BBB's A-Z ordering does
-# not break a tie between two locations of one business deterministically —
-# measured 2026-09-16, three engines running the identical query returned the
-# identical 30 skus with two rows swapped — so a position diff would report
-# churn on every run and teach the reader to ignore the output.
+# Deliberately NOT tracked: `position` and `page` (see the module
+# docstring), and `scraped_at`, which differs on every run by definition.
 TRACKED_FIELDS = (
-    # standing
-    "rating_grade", "rating_score", "is_accredited", "out_of_business",
-    # what it does and where
-    "category", "categories", "address", "city", "state", "postal_code",
-    "service_areas",
-    # how to reach it
-    "phone", "website",
-    # only a profile run fills these; see PROFILE_ONLY_FIELDS
-    "complaints_total", "complaints_3y", "complaints_12m", "reviews_total",
-    "review_stars_avg", "years_in_business", "entity_type", "accredited_since",
+    # the body, and whether it was recovered
+    "title", "text_truncated",
+    # engagement
+    "reposts_count", "comments_count", "attitudes_count",
+    # the author as the row states them
+    "author_name", "author_verified", "author_followers",
+    # where and what
+    "region", "pic_count", "pic_urls", "video_url", "topics", "links",
+    "is_ad",
 )
 
-# The subset that ONLY a profile run populates.
+# The subset whose value depends on WHICH read produced the body.
 #
-# A listing row leaves every one of these null, so diffing a listing run
-# against a profile run would report each of them as a change on every row —
-# and none of it would be about the business. When the two rows disagree on
-# `data_source`, those fields are reported separately as `source_changed`
-# rather than as changes, which is this family's rule (§8: a difference that
-# comes with a provenance difference says something about our own two
-# snapshots, not about the site).
-PROFILE_ONLY_FIELDS = (
-    "complaints_total", "complaints_3y", "complaints_12m", "reviews_total",
-    "review_stars_avg", "years_in_business", "entity_type", "accredited_since",
-    "website",
-)
+# A post flagged `isLongText` arrives cut off at about 150 characters in
+# `text_raw`; `/ajax/statuses/longtext` returns the rest. When the two rows
+# disagree on `text_source`, a body difference is an artefact of one run
+# recovering the text and the other not, so it is reported as
+# `source_changed` rather than as a change — this family's rule (§8: a
+# difference that comes with a provenance difference says something about
+# our own two snapshots, not about the site).
+TEXT_SOURCE_FIELDS = ("title", "text_truncated")
 
 
 def _load(path: str) -> List[dict]:
@@ -147,23 +134,20 @@ def diff_products(old: List[dict], new: List[dict]) -> dict:
         if not field_changes:
             continue
 
-        # A row whose `data_source` differs between runs is not comparable on
-        # the profile-only columns: a listing row leaves them null and a
-        # profile row fills them, so every one of them would read as a change
-        # and none of it would be about the business. Reporting it as a
-        # change would be a false alarm about the site; the other columns
-        # still compare fine.
-        sources = (before.get("data_source"), after.get("data_source"))
+        # A row whose `text_source` differs between runs is not comparable
+        # on the body: one read recovered the long text and the other did
+        # not. The other columns still compare fine.
+        sources = (before.get("text_source"), after.get("text_source"))
         if sources[0] != sources[1] and any(f in field_changes
-                                            for f in PROFILE_ONLY_FIELDS):
-            profile_part = {f: v for f, v in field_changes.items()
-                            if f in PROFILE_ONLY_FIELDS}
+                                            for f in TEXT_SOURCE_FIELDS):
+            text_part = {f: v for f, v in field_changes.items()
+                            if f in TEXT_SOURCE_FIELDS}
             other_part = {f: v for f, v in field_changes.items()
-                          if f not in PROFILE_ONLY_FIELDS}
+                          if f not in TEXT_SOURCE_FIELDS}
             source_changed.append({
                 "sku": sku, "title": after.get("title"),
-                "data_source": {"old": sources[0], "new": sources[1]},
-                "changes": profile_part,
+                "text_source": {"old": sources[0], "new": sources[1]},
+                "changes": text_part,
             })
             field_changes = other_part
             if not field_changes:
@@ -185,25 +169,25 @@ def diff_products(old: List[dict], new: List[dict]) -> dict:
 def _print_summary(result: dict) -> None:
     print(f"[+] {len(result['added'])} added, {len(result['removed'])} removed, "
           f"{len(result['changed'])} changed, "
-          f"{len(result['source_changed'])} not comparable across run kinds.")
+          f"{len(result['source_changed'])} not comparable across text sources.")
     for p in result["added"]:
-        print(f"  + {p.get('sku')}  {p.get('title')}  "
-              f"{p.get('rating_grade') or 'not graded'}  {p.get('city')}")
+        print(f"  + {p.get('sku')}  {p.get('author_name')}  "
+              f"{(p.get('title') or '')[:40]}")
     for p in result["removed"]:
-        print(f"  - {p.get('sku')}  {p.get('title')}  "
-              f"{p.get('rating_grade') or 'not graded'}  {p.get('city')}")
+        print(f"  - {p.get('sku')}  {p.get('author_name')}  "
+              f"{(p.get('title') or '')[:40]}")
     for c in result["changed"]:
         deltas = ", ".join(f"{f}: {v['old']!r} -> {v['new']!r}"
                            for f, v in c["changes"].items())
-        print(f"  ~ {c['sku']}  {c['title']}  {deltas}")
+        print(f"  ~ {c['sku']}  {deltas}")
     for c in result["source_changed"]:
-        src = c["data_source"]
+        src = c["text_source"]
         deltas = ", ".join(f"{f}: {v['old']!r} -> {v['new']!r}"
                            for f, v in c["changes"].items())
-        print(f"  ? {c['sku']}  {c['title']}  {deltas}  "
-              f"[data_source {src['old']!r} -> {src['new']!r}: a listing row "
-              f"leaves these columns null and a profile row fills them, so "
-              f"this is not a change in the business]")
+        print(f"  ? {c['sku']}  {deltas}  "
+              f"[text_source {src['old']!r} -> {src['new']!r}: one run "
+              f"recovered the long text and the other did not, so this is "
+              f"not a change in the post]")
     unmatchable = result["unmatchable_old"] + result["unmatchable_new"]
     if unmatchable:
         print(f"[!] {unmatchable} row(s) across both files had no sku or a "
@@ -263,55 +247,19 @@ def _check_comparable(args) -> bool:
                 f"page(s), reason {meta.get('stop_reason')!r}")
     if len(set(modes.values())) > 1:
         problems.append(
-            f"the two runs are different modes ({modes}). A listing row and a "
-            f"detail row carry different fields, so `added`/`removed` would "
-            f"describe the mode change rather than the catalogue.")
+            f"the two runs are different modes ({modes}). A post row and a "
+            f"comment row carry different fields and different ids, so "
+            f"`added`/`removed` would describe the mode change rather than "
+            f"the content.")
 
-    # A SORT MISMATCH, which on this site is the one that really bites.
-    #
-    # The sibling repos guard a cross-storefront diff with `source`. BBB has
-    # ONE host for both its countries, so `source` is "bbb.org" on both sides
-    # and there is no storefront split for it to catch. What decides WHICH
-    # businesses are in a file here is the ORDERING, because every query is
-    # capped at 15 pages of 15 however many it matched: measured 2026-09-16,
-    # `best-match` returned 15/15 BBB Accredited businesses and `a-z`
-    # returned 0/15 from the identical query.
-    #
-    # So two runs that differ only in `--sort` hold two different SAMPLES of
-    # the same result set, and every line of a diff between them is an
-    # artefact of the ordering rather than a change in the directory.
-    sorts = {}
-    for label, path in (("--old", args.old), ("--new", args.new)):
-        try:
-            rows = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        seen = {r.get("sort") for r in rows if r.get("sort")}
-        if len(seen) == 1:
-            sorts[label] = seen.pop()
-        elif len(seen) > 1:
-            problems.append(
-                f"{label} ({path}) holds more than one sort ({sorted(seen)}) "
-                f"— that file merges runs of different orderings, so it is "
-                f"not one sample of anything.")
-    if len(set(sorts.values())) > 1:
-        problems.append(
-            f"the two runs used different orderings ({sorts}). BBB serves at "
-            f"most 225 rows of a result set that can run to tens of "
-            f"thousands, and the ordering decides which 225 — 'best-match' "
-            f"returned 15/15 BBB Accredited businesses where 'a-z' returned "
-            f"0/15 from the same query. Every `added`/`removed` line would "
-            f"describe the sort rather than the directory.")
-
-    # And whether either run was CAPPED, which changes what `removed` means.
+    # And whether either run was a hot-feed run, which changes what
+    # `added`/`removed` mean.
     for label, path in (("--old", args.old), ("--new", args.new)):
         _, meta = _run_status(path)
-        if (meta or {}).get("capped_by_site"):
-            print(f"[i] {label} ({path}) holds {meta.get('reachable_max')} of "
-                  f"{meta.get('total_results')} businesses BBB reports for "
-                  f"that query — a complete run, and a sample. A `removed` "
-                  f"line may mean the ordering shifted rather than that "
-                  f"anything closed.")
+        if (meta or {}).get("feed_rerolled"):
+            print(f"[i] {label} ({path}) is a hot-feed run, and that feed "
+                  f"re-rolls on every fetch — `added`/`removed` describe the "
+                  f"feed's churn, not posts appearing or disappearing.")
 
     if not problems:
         return True
@@ -324,14 +272,14 @@ def _check_comparable(args) -> bool:
     for line in problems:
         print(f"      {line}")
     print("    Re-run the incomplete side, or pass --force to compare anyway "
-          "(added/removed will include businesses that were simply never "
+          "(added/removed will include posts that were simply never "
           "fetched).")
     return False
 
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Diff two bbb-scraper JSON outputs by sku.")
+        description="Diff two weibo-scraper JSON outputs by sku.")
     p.add_argument("--old", required=True, help="Earlier run's JSON output.")
     p.add_argument("--new", required=True, help="Later run's JSON output.")
     p.add_argument("--out", default=None,
@@ -366,11 +314,10 @@ def main() -> int:
             json.dump(result, f, ensure_ascii=False, indent=2)
         print(f"[+] Full diff written to {args.out}")
 
-    # `source_changed` is not a reason to fail: it means one row came from a
-    # listing run and the other from a profile run, so the columns only a
-    # profile fills differ. That says something about our own two snapshots
-    # rather than about the business, and alerting on it would train whoever
-    # reads the alert to ignore it.
+    # `source_changed` is not a reason to fail: it means one run recovered a
+    # post's long text and the other did not. That says something about our
+    # own two snapshots rather than about the post, and alerting on it would
+    # train whoever reads the alert to ignore it.
     if args.fail_on_change and (result["added"] or result["removed"] or result["changed"]):
         return 1
     return 0

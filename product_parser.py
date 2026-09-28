@@ -16,9 +16,9 @@ What there is instead is better. Weibo's own front end is a React app that
 renders nothing server-side and fetches everything from `/ajax/` endpoints,
 so the site hands out clean JSON that is RICHER than anything it paints —
 CLAUDE.md §21's "ask what the front end calls before assuming a browser",
-answered the same way BBB answered it. Every function below parses that
-JSON. No HTML is parsed at all, and BeautifulSoup is imported for exactly
-one job: stripping the `<a>` wrapper off the posting-client string.
+answered the same way the sibling bbb-scraper answered it. Every function
+below parses that JSON. No HTML is parsed at all, and BeautifulSoup is
+imported for exactly one job: stripping the `<a>` wrapper off the posting-client string.
 
     --mode hot    /ajax/feed/hottimeline               the public hot feed
     --mode user   /ajax/profile/getWaterFallContent    one account's posts
