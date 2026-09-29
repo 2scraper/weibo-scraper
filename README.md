@@ -11,6 +11,18 @@ Scrapes [weibo.com](https://weibo.com) — the public hot feed, one account's
 posts, and one post's comments — in JSON or CSV, through Playwright,
 Selenium or Puppeteer.
 
+**No browser needed.** The shortest path installs two libraries and no
+Chromium at all:
+
+```bash
+pip install -r requirements.txt
+
+python weibo_api.py --mode hot --pages 3 --format both --out weibo_posts
+```
+
+Or through a real browser, which is what you want for `--cdp-endpoint` or
+a fingerprint:
+
 ```bash
 pip install -r requirements.txt -r requirements-playwright.txt
 python -m playwright install chromium
@@ -18,8 +30,11 @@ python -m playwright install chromium
 python playwright_scraper.py --mode hot --pages 3 --format both --out weibo_posts
 ```
 
-That command needs no account, no API key and no proxy. The section below
-says what was measured, and from where.
+Both need no account, no API key and no proxy, and both write the same 36
+columns. In `--mode hot`, `--pages 3` means **three fetches of a feed that
+re-rolls**, not pages 1-2-3 — that feed has no page 2, and the log says
+`fetch 1`, `fetch 2` rather than `page`. The section below says what was
+measured, and from where.
 
 ---
 
@@ -94,9 +109,13 @@ code — see [Captchas](#captchas).
 
 ## The three modes
 
+Any of the four commands takes these; `weibo_api.py` is the browserless
+one and the three `*_scraper.py` are the engines.
+
 ```bash
-# the public hot feed (推荐). Not paginated — see below.
-python playwright_scraper.py --mode hot --pages 3
+# the public hot feed (推荐). NOT paginated: --pages N is N fetches of a
+# moving feed, not pages 1..N. See below.
+python weibo_api.py --mode hot --pages 3
 
 # one account's posts, walked by cursor
 python playwright_scraper.py --mode user --url https://weibo.com/u/2803301701 --pages 5
@@ -307,6 +326,25 @@ source  scraped_at  url  sku  title  text_source  text_truncated …
   repo in this family writes this column, so one schema works across them.
 * Every run writes `<out>.meta.json` beside the data: status, stop reason,
   which fetches failed by number, and the mode-specific honesty fields.
+
+### CSV neutralises formulas; JSON does not
+
+A spreadsheet executes a cell that begins `=`, `+`, `-` or `@`, and the
+text here is written by whoever wrote the post — so a payload aimed at
+somebody else's export is an ordinary thing to publish. The **CSV**
+prefixes such a cell with an apostrophe, which Excel and LibreOffice strip
+on display and a script can strip in one line. The **JSON is untouched**:
+it carries the site's bytes.
+
+The two outputs of one run therefore differ by exactly that many cells,
+and the sidecar says by how many (`csv_cells_escaped`). Measured: 1 cell
+in 454 rows from earlier runs, and 2 in a live 30-row run — rare, and free
+on the rows it does not touch. A negative number stays a number.
+
+**Every file is written atomically** — to a temporary file beside the
+target, then renamed over it. A crash, a kill or a full disk halfway
+through leaves the previous run's output exactly as it was, which is the
+same promise `--allow-empty` protects from the other side.
 
 **Exit codes:** `0` ok · `1` crash · `2` bad usage · `3` blocked ·
 `4` zero posts · `5` remote API error · `6` partial.

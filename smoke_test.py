@@ -2066,6 +2066,195 @@ def test_copied_env_example_reads_as_unset():
               "copied example must never be sent to an API as a real value")
 
 
+def test_every_write_is_atomic():
+    """A crash mid-write must not destroy the previous run's good data.
+
+    This module's first invariant is that a bad run never replaces good
+    output — `save` refuses to write an empty result for exactly that
+    reason. Writing in place gives it up by another route: `open(path,
+    "w")` TRUNCATES before a byte is written, so a kill, a full disk or an
+    exception halfway through `json.dump` leaves a shorter file where a
+    complete one was.
+
+    Found by a third-party audit, which ranked it last; it belongs first,
+    because it breaks a rule the module already holds. Measured across the
+    family the same day: 37 of 43 repos wrote in place. The fix is lifted
+    from the six that did not.
+
+    The SIDECAR is covered too, and the audit did not mention it: it is
+    the file a consumer branches on, so a truncated one beside good rows
+    is worse than truncated rows.
+    """
+    import output_writer as O
+
+    src = inspect.getsource(O)
+    check('open(path, "w"' not in src,
+          "output_writer still writes a file in place — every write goes "
+          "through _atomic, including the sidecar")
+    check(hasattr(O, "_atomic"), "the atomic writer exists")
+
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "run")
+        O.save([O.Post(sku="A", title="last night's good data")], out, "both")
+        good = open(out + ".json", encoding="utf-8").read()
+
+        class Boom(Exception):
+            pass
+
+        class Exploding(list):
+            def __iter__(self):
+                yield O.Post(sku="B", title="half a row")
+                raise Boom("killed mid-write")
+
+        try:
+            O.write_json(Exploding(), out + ".json")
+        except Boom:
+            pass
+        after = open(out + ".json", encoding="utf-8").read()
+        eq(after, good, "the previous file survived an interrupted write")
+        try:
+            json.loads(after)
+            check(True, "and is still valid JSON")
+        except ValueError:
+            check(False, "the surviving file is not valid JSON")
+        leftovers = [f for f in os.listdir(d) if f.endswith(".tmp")]
+        check(not leftovers, f"no temp files left behind: {leftovers}")
+
+
+def test_csv_neutralises_formulas_and_says_so():
+    """A cell that begins `=` is executed by a spreadsheet.
+
+    The text here is written by whoever wrote the post, so a payload aimed
+    at somebody else's export is an ordinary thing to publish. Measured
+    2026-09-29: ONE cell in 454 rows from earlier runs qualifies (an
+    `author_name` of dashes), and a live 30-row run escaped TWO.
+
+    Three halves to the rule, and each is pinned:
+      * CSV escapes a leading = + - @ (and tab/CR) with an apostrophe;
+      * JSON does NOT — it carries the site's bytes;
+      * the sidecar records how many cells differ, so the divergence is
+        declared rather than discovered.
+
+    And a number stays a number: escaping `-5` would turn a count into
+    text and break every sum a consumer writes.
+    """
+    import output_writer as O
+
+    eq(O._csv_cell("=HYPERLINK(1)"), "'=HYPERLINK(1)", "a formula is escaped")
+    eq(O._csv_cell("@SUM(A1)"), "'@SUM(A1)", "an @ lead is escaped")
+    eq(O._csv_cell("---------CL---------"), "'---------CL---------",
+       "a dash lead is escaped — this one is a real Weibo display name")
+    eq(O._csv_cell("ordinary text"), "ordinary text", "text is untouched")
+    eq(O._csv_cell(-5), -5, "a NEGATIVE NUMBER stays a number")
+    eq(O._csv_cell(None), None, "a null stays null")
+    eq(O._csv_cell(["a", "b"]), "a | b", "a list still joins")
+
+    rows = [O.Post(sku="a", title="=cmd"), O.Post(sku="b", title="fine"),
+            O.Post(sku="c", author_name="+1")]
+    eq(O.count_csv_escapes(rows), 2, "the counter agrees with the writer")
+
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "run")
+        O.finish_run(rows, out, "both", False, blocked=False,
+                     stop_reason="completed", pages_requested=1,
+                     pages_completed=1, start_url="u", final_url="u",
+                     mode="hot")
+        meta = json.load(open(out + ".meta.json", encoding="utf-8"))
+        eq(meta.get("csv_cells_escaped"), 2,
+           "the sidecar declares how many cells the CSV changed")
+        rows_json = json.load(open(out + ".json", encoding="utf-8"))
+        eq(rows_json[0]["title"], "=cmd",
+           "JSON keeps the site's bytes, unescaped")
+        import csv as _csv
+        with open(out + ".csv", encoding="utf-8", newline="") as fh:
+            first = next(_csv.DictReader(fh))
+        eq(first["title"], "'=cmd", "CSV carries the neutralised form")
+
+        # A json-only run has nothing to declare.
+        out2 = os.path.join(d, "jsononly")
+        O.finish_run(rows, out2, "json", False, blocked=False,
+                     stop_reason="completed", pages_requested=1,
+                     pages_completed=1, start_url="u", final_url="u",
+                     mode="hot")
+        meta2 = json.load(open(out2 + ".meta.json", encoding="utf-8"))
+        check("csv_cells_escaped" not in meta2,
+              "a run that wrote no CSV records no escape count")
+
+
+def test_the_browserless_cli_is_runnable_and_honest():
+    """The README's central claim needs a command behind it.
+
+    `WeiboClient` read every route this repo uses with no browser, no key
+    and no proxy — and was library-only, while every runnable entry point
+    launched Chromium. A claim a reader cannot execute is one they have to
+    take on trust.
+
+    The flags it does NOT offer are the honest part: `--cdp-endpoint`,
+    `--fingerprint`, `--fp-country`, `--fp-tags` and `--headless` all
+    describe a browser, and there is none here. Offering them would be a
+    setting that looks configurable and is not.
+    """
+    import weibo_api as W
+
+    src = open(os.path.join(HERE, "weibo_api.py"), encoding="utf-8").read()
+    check('if __name__ == "__main__":' in src,
+          "weibo_api.py is runnable — the browserless path has a command")
+    for name in ("scrape", "parse_args", "main"):
+        check(hasattr(W, name), f"weibo_api.{name} exists")
+
+    tree = ast.parse(src)
+    fn = next((n for n in tree.body
+               if isinstance(n, ast.FunctionDef) and n.name == "parse_args"), None)
+    check(fn is not None, "weibo_api has a parse_args")
+    flags = set()
+    for n in ast.walk(fn or ast.Module(body=[], type_ignores=[])):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "add_argument"):
+            for a in n.args:
+                if isinstance(a, ast.Constant) and str(a.value).startswith("--"):
+                    flags.add(a.value)
+
+    for browser_only in ("--cdp-endpoint", "--fingerprint", "--fp-country",
+                         "--fp-tags", "--headless", "--headful"):
+        check(browser_only not in flags,
+              f"the browserless CLI must not offer {browser_only} — it "
+              "describes a browser it does not have")
+
+    # What it DOES offer must be part of the family contract, so a reader
+    # moving between the four commands is not learning new names.
+    strays = flags - CONTRACT_FLAGS
+    check(not strays, f"the browserless CLI invents no new flags: {sorted(strays)}")
+    for shared in ("--mode", "--url", "--pages", "--format", "--out"):
+        check(shared in flags, f"{shared} is offered, as in the engines")
+
+
+def test_a_usage_error_exits_2_not_1():
+    """§9's table says 2 is bad usage and 1 is a crash.
+
+    Every CLI here raised a bare `SystemExit("message")` for a missing or
+    unreadable --url, which exits 1 — so a typo reported itself as a crash
+    in this code. argparse's own errors in the SAME command already exit 2,
+    so the two halves of one CLI disagreed about what a typo is.
+
+    Asserted on the SOURCE rather than by running four browsers: a raise of
+    SystemExit with a message, instead of with the code, is the defect.
+    """
+    for name in ENGINES + ("weibo_api",):
+        path = os.path.join(HERE, f"{name}.py")
+        tree = ast.parse(open(path, encoding="utf-8").read())
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)
+                    and getattr(n.exc.func, "id", "") == "SystemExit"):
+                continue
+            arg = n.exc.args[0] if n.exc.args else None
+            numeric = (isinstance(arg, ast.Constant)
+                       and isinstance(arg.value, int))
+            check(numeric,
+                  f"{name}:{n.lineno} raises SystemExit with a MESSAGE, which "
+                  "exits 1 (crash). Log the message and raise SystemExit(2), "
+                  "the contract's code for bad usage")
+
+
 def test_output_contract():
     import output_writer as O
     eq(O.EXIT_NO_PRODUCTS, 4, "exit 4 = zero products")

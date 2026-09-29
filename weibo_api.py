@@ -44,6 +44,7 @@ is working.
 
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -311,3 +312,276 @@ class WeiboClient:
             status, body = self.get(url)
             state = classify(body, status, url)
         return state, P._payload_dict(body)
+
+
+# ---------------------------------------------------------------------------
+# The browserless CLI
+# ---------------------------------------------------------------------------
+# The README's central claim is that none of the paid products is needed for
+# these three modes, and until this existed no COMMAND stood behind it:
+# `WeiboClient` was library-only, and every runnable entry point launched
+# Chromium. A claim a user cannot execute is a claim they have to take on
+# trust (CLAUDE.md §13).
+#
+# Deliberately a fourth CLI rather than an `--engine http` flag on the three
+# browser engines. Those three declare one identical flag set, asserted in
+# both directions by the suite, and a flag that only one of them can honour
+# would either break that or force two engines to accept an option they
+# cannot implement. Transport and engine are different things.
+#
+# It offers a SUBSET of the family flag list, and the omissions are the
+# point: `--cdp-endpoint`, `--fingerprint`, `--fp-country`, `--fp-tags` and
+# `--headless/--headful` all describe a browser, and there is none here.
+# Offering them would be the kind of setting that looks configurable and is
+# not (§3).
+
+import argparse
+import sys
+
+CLI_MODES = ("hot", "user", "post")
+
+
+def _recover_long_text(client: "WeiboClient", rows) -> tuple:
+    """Fetch the untruncated body for every row the site flagged.
+
+    The same three outcomes the engines distinguish: recovered, the
+    endpoint answering that there is no more text (so the post was whole
+    and `isLongText` over-reported), and the endpoint not reachable at all
+    — only the last is a failure. See product_parser.apply_longtext.
+    """
+    flagged = [r for r in rows if r.text_truncated]
+    if not flagged:
+        return 0, 0, 0
+    recovered = false_flags = 0
+    for row in flagged:
+        if not row.sku:
+            continue
+        try:
+            state, payload = client.fetch(P.longtext_url(row.sku))
+        except (TransportError, VisitorError) as exc:
+            log.warning("[!] long-text recovery failed for %s: %s",
+                        row.sku, mask_secrets(str(exc))[:120])
+            P.apply_longtext(row, None, reached=False)
+            continue
+        if state in ("content", "empty"):
+            P.apply_longtext(row, P.parse_longtext(payload), reached=True)
+            if row.text_source == "longtext":
+                recovered += 1
+            elif row.text_source == "inline":
+                false_flags += 1
+        else:
+            P.apply_longtext(row, None, reached=False)
+    if false_flags:
+        log.info("[i] %d flagged post(s) had nothing to recover — the site's "
+                 "isLongText flag was a false positive, and those rows are "
+                 "marked whole rather than truncated", false_flags)
+    log.info("[+] long text recovered for %d of %d flagged post(s)",
+             recovered, len(flagged))
+    return recovered, len(flagged), false_flags
+
+
+def scrape(args) -> int:
+    from output_writer import EXIT_API_ERROR, EXIT_NO_PRODUCTS, dedupe_by_key, finish_run
+    import page_flow
+
+    client = WeiboClient(proxy=args.proxy, delay=args.delay)
+
+    uid = mblogid = mid = None
+    if args.mode != "hot":
+        if not args.url:
+            log.error(
+                f"--mode {args.mode} needs --url. For `user`, an account: "
+                "https://weibo.com/u/2803301701 (or the bare id). For "
+                "`post`, a post: https://weibo.com/2803301701/RiPCAfklU")
+            raise SystemExit(2)
+        ok, why = P.is_supported_host(args.url) if "//" in args.url else (True, "")
+        if not ok:
+            log.error(f"refusing {args.url}: {why}")
+            raise SystemExit(2)
+        if args.mode == "user":
+            uid = P.uid_from_url(args.url)
+            if not uid:
+                log.error(
+                    f"could not find an account id in {args.url!r}. Expected "
+                    "https://weibo.com/u/<digits>, or the bare id.")
+                raise SystemExit(2)
+        else:
+            mblogid, mid = P.post_id_from_url(args.url)
+            if not (mblogid or mid):
+                log.error(
+                    f"could not find a post id in {args.url!r}. Expected "
+                    "https://weibo.com/<uid>/<mblogid>, or /detail/<mid>.")
+                raise SystemExit(2)
+
+    rows, seen = [], set()
+    pages_completed, pages_failed = 0, []
+    stop_reason, blocked = "completed", False
+    extra, start_url, final_url = {}, "", ""
+    author_followers = None
+    dedupe_key = "comment_id" if args.mode == "post" else "sku"
+    pages = page_flow.pages_to_plan(args.pages, None)
+
+    try:
+        if args.mode == "user":
+            state, payload = client.fetch(P.profile_info_url(uid))
+            if state == "content":
+                prof = P.parse_profile(payload)
+                author_followers = prof.get("followers_count")
+                extra["statuses_claimed"] = prof.get("statuses_count")
+                extra["account"] = prof.get("screen_name")
+                extra["followers_count"] = author_followers
+            else:
+                log.warning("[!] could not read the profile for %s — follower "
+                            "counts will be null on every row", uid)
+
+        if args.mode == "post" and not mid and mblogid:
+            state, payload = client.fetch(P.SHOW_URL.format(mblogid=mblogid))
+            if state == "content":
+                mid = (str(payload.get("mid")) if payload.get("mid")
+                       else str(payload.get("idstr")) if payload.get("idstr")
+                       else None)
+            if not mid:
+                log.error("[x] could not resolve %s to a numeric mid, which "
+                          "is the id the comments endpoint takes", mblogid)
+                return EXIT_NO_PRODUCTS
+
+        cursor = 0
+        for page_num in range(1, pages + 1):
+            if args.mode == "hot":
+                url = P.hot_feed_url(count=25)
+            elif args.mode == "user":
+                url = P.user_feed_url(uid, cursor)
+            else:
+                url = P.comments_url(mid, count=20, max_id=cursor or 0)
+            if page_num == 1:
+                start_url = url
+            final_url = url
+
+            state, payload = client.fetch(url)
+            if not page_flow.should_parse(state):
+                pages_failed.append(page_num)
+                if page_flow.counts_as_blocked(state):
+                    blocked = True
+                    stop_reason = state
+                    log.error("[x] page %d: %s — this wants an ACCOUNT, and "
+                              "no exit address supplies one.", page_num, state)
+                else:
+                    stop_reason = f"error_on_page_{page_num}"
+                    log.error("[x] page %d: %s", page_num, state)
+                break
+
+            page_rows, cursor_next = P.rows_for_mode(
+                args.mode, payload, page=page_num, parent_sku=mblogid,
+                author_followers=author_followers)
+            fresh = dedupe_by_key(page_rows, seen, key=dedupe_key)
+            rows.extend(fresh)
+            pages_completed += 1
+            unit = "fetch" if args.mode == "hot" else "page"
+            log.info("[+] %s %d: %d row(s), %d new (total %d)",
+                     unit, page_num, len(page_rows), len(fresh), len(rows))
+
+            if not page_rows:
+                stop_reason = "no_new_products"
+                break
+            if args.mode == "hot":
+                extra["feed_rerolled"] = True
+                if page_num >= pages:
+                    stop_reason = "feed_not_addressable"
+            else:
+                cursor = cursor_next
+                if cursor in (None, -1, 0, "-1", "0"):
+                    stop_reason = ("single_page_mode" if pages == 1
+                                   else "cursor_exhausted")
+                    break
+            if not fresh:
+                stop_reason = "no_new_products"
+                break
+        else:
+            if args.mode == "hot":
+                stop_reason = "feed_not_addressable"
+
+        if args.mode in ("hot", "user") and rows:
+            recovered, attempted, _ = _recover_long_text(client, rows)
+            extra["long_text_flagged"] = attempted
+            extra["long_text_recovered"] = recovered
+
+    except TransportError as exc:
+        log.error("[x] nothing was reached: %s", mask_secrets(str(exc)))
+        if not rows:
+            return EXIT_API_ERROR
+        stop_reason = "transport_error"
+    except VisitorError as exc:
+        log.error("[x] the visitor handshake failed: %s", mask_secrets(str(exc)))
+        if not rows:
+            return EXIT_API_ERROR
+        stop_reason = "visitor_failed"
+
+    if rows:
+        still = sum(1 for r in rows if r.text_truncated)
+        if still:
+            log.warning("[!] %d of %d row(s) still hold TRUNCATED text — see "
+                        "the text_truncated column before using `title`",
+                        still, len(rows))
+        extra["text_truncated_rows"] = still
+    extra["transport"] = "http"
+
+    return finish_run(
+        rows, args.out, args.format, args.allow_empty, blocked=blocked,
+        stop_reason=stop_reason, pages_requested=pages,
+        pages_completed=pages_completed, pages_failed=pages_failed,
+        start_url=start_url, final_url=final_url, mode=args.mode,
+        source=P.SOURCE, extra=extra)
+
+
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        description="Scrape Weibo with NO browser at all — the visitor "
+                    "handshake and the site's own JSON over plain HTTPS. "
+                    "This is the path the README's 'you need no key, no "
+                    "proxy and no account' claim describes, now runnable.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__)
+    p.add_argument("--mode", choices=CLI_MODES, default="hot")
+    p.add_argument("--url", default=None,
+                   help="An account or post URL, or a bare id. Required for "
+                        "--mode user and --mode post.")
+    p.add_argument("--pages", type=int, default=1,
+                   help=f"How many fetches to make (max {P.MAX_PAGES}). The "
+                        "hot feed has no page 2: N there means N fetches of "
+                        "a feed that re-rolls.")
+    p.add_argument("--format", choices=["json", "csv", "both"], default="json")
+    p.add_argument("--out", default="weibo_posts")
+    p.add_argument("--delay", type=float, default=1.0)
+    p.add_argument("--proxy", default=None,
+                   help="Credentials are read from .env and never from a "
+                        "command line, where `ps` can see them.")
+    p.add_argument("--allow-empty", action="store_true")
+    args = p.parse_args(argv)
+    import env_config
+    env_config.apply(args)
+    if args.pages < 1:
+        p.error("--pages must be at least 1")
+    if args.pages > P.MAX_PAGES:
+        p.error(f"--pages above {P.MAX_PAGES} is refused")
+    return args
+
+
+def main(argv=None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    args = parse_args(argv)
+    try:
+        return scrape(args)
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        log.error("[x] interrupted")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        log.error("[x] %s", mask_secrets(str(exc)))
+        if os.environ.get("WEIBO_TRACEBACK"):
+            raise
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

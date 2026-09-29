@@ -592,25 +592,29 @@ def _resolve_target(args) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     if args.mode == "hot":
         return None, None, None
     if not args.url:
-        raise SystemExit(
+        log.error(
             f"--mode {args.mode} needs --url. For `user`, an account: "
             "https://weibo.com/u/2803301701 (or the bare id). For `post`, a "
             "post: https://weibo.com/2803301701/RiPCAfklU")
+        raise SystemExit(2)
     ok, why = P.is_supported_host(args.url) if "//" in args.url else (True, "")
     if not ok:
-        raise SystemExit(f"refusing {args.url}: {why}")
+        log.error(f"refusing {args.url}: {why}")
+        raise SystemExit(2)
     if args.mode == "user":
         uid = P.uid_from_url(args.url)
         if not uid:
-            raise SystemExit(
+            log.error(
                 f"could not find an account id in {args.url!r}. Expected "
                 "https://weibo.com/u/<digits>, or the bare id.")
+            raise SystemExit(2)
         return uid, None, None
     mblogid, mid = P.post_id_from_url(args.url)
     if not (mblogid or mid):
-        raise SystemExit(
+        log.error(
             f"could not find a post id in {args.url!r}. Expected "
             "https://weibo.com/<uid>/<mblogid>, or /detail/<mid>.")
+        raise SystemExit(2)
     return P.uid_from_url(args.url), mblogid, mid
 
 
@@ -729,8 +733,9 @@ def scrape(args) -> int:
             fresh = dedupe_by_key(outcome.rows, seen, key=dedupe_key)
             rows.extend(fresh)
             pages_completed += 1
-            log.info("[+] page %d: %d row(s), %d new (total %d)",
-                     page_num, len(outcome.rows), len(fresh), len(rows))
+            unit = "fetch" if args.mode == "hot" else "page"
+            log.info("[+] %s %d: %d row(s), %d new (total %d)",
+                     unit, page_num, len(outcome.rows), len(fresh), len(rows))
 
             if not outcome.rows:
                 stop_reason = "no_new_products"

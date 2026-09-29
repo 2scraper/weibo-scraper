@@ -75,8 +75,11 @@ no post above a million appeared, so the ceiling was never exercised. A
 count this file cannot demonstrate is not a count it claims (CLAUDE.md
 §20: a column you never saw take its other value is not verified).
 """
+import contextlib
 import csv
 import json
+import os
+import tempfile
 from dataclasses import dataclass, asdict, field, fields
 from datetime import datetime, timezone
 from typing import Optional, List, Set, Sequence, Any, Type
@@ -301,14 +304,116 @@ def dedupe_by_sku(rows: Sequence[Any], seen: Set[str]) -> List[Any]:
 LIST_CSV_SEPARATOR = " | "
 
 
+# Characters a spreadsheet reads as the start of a FORMULA rather than as
+# text. Tab and carriage return are here because some importers strip
+# leading whitespace before deciding, which hands the next character the
+# same power.
+_CSV_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _needs_csv_escape(value: Any) -> bool:
+    """Whether this cell would be read as a formula by a spreadsheet.
+
+    Only STRINGS are considered. An int of -5 renders as `-5`, which Excel
+    reads as the number it is; escaping it would turn a number into text
+    and break every sum a consumer writes. The risk lives in text the SITE
+    supplied, and on Weibo that text is written by anyone with an account.
+    """
+    return isinstance(value, str) and value[:1] in _CSV_FORMULA_LEAD
+
+
+def count_csv_escapes(rows: Sequence[Any], row_cls: Type = Post) -> int:
+    """How many cells `write_csv` will neutralise for these rows.
+
+    A pure function over the rows rather than a counter threaded back out
+    of the writer, so `save()` keeps returning an exit code and nothing
+    downstream changes shape. It shares `_needs_csv_escape` with the
+    writer, so the count and the escaping cannot disagree.
+    """
+    total = 0
+    for row in rows:
+        for value in asdict(row).values():
+            if _needs_csv_escape(_csv_value(value)):
+                total += 1
+    return total
+
+
 def _csv_value(v: Any) -> Any:
     if isinstance(v, (list, tuple)):
         return LIST_CSV_SEPARATOR.join(str(x) for x in v)
     return v
 
 
+def _csv_cell(v: Any) -> Any:
+    """A cell as it is written to CSV, with a formula lead neutralised.
+
+    The CSV output is the one a person opens in a spreadsheet, and a cell
+    that begins `=` is executed there. The text on this site is supplied by
+    whoever wrote the post, so `=HYPERLINK(...)` aimed at somebody else's
+    export is an ordinary thing to publish, not a hypothetical.
+
+    A leading apostrophe is the spreadsheet convention for "this is text";
+    it is stripped by Excel and LibreOffice on display and is trivially
+    reversible by a script.
+
+    **JSON is NOT touched.** It carries the site's bytes, so the two
+    outputs of one run genuinely differ — which is why the run's sidecar
+    records `csv_cells_escaped`. A divergence a consumer can read about is
+    a decision; one they have to discover is a bug.
+
+    Measured 2026-09-29 over 454 rows from earlier live runs: ONE cell
+    qualifies, an `author_name` of `---------CL---------`. Rare, and the
+    cost of the guard on the other 453 rows is nothing.
+    """
+    v = _csv_value(v)
+    if _needs_csv_escape(v):
+        return "'" + v
+    return v
+
+
+@contextlib.contextmanager
+def _atomic(path: str, newline: Optional[str] = None):
+    """Write to a temporary file beside `path`, then rename over it.
+
+    Every write here replaces a file a previous run may have left, and the
+    invariant this module exists to protect is that a bad run never
+    destroys last night's good data (`save` refuses to overwrite with an
+    empty result for the same reason). Writing in place gives that up at
+    the worst moment: a kill, a full disk or a crash halfway through
+    `json.dump` leaves a TRUNCATED file where a complete one was, and the
+    sidecar beside it still describes the old, good run.
+
+    `os.replace` is atomic on POSIX and on Windows, so a reader sees
+    either the whole previous file or the whole new one and never half of
+    either. The temporary file is created in the SAME directory, because a
+    rename across filesystems is not atomic and would silently degrade to
+    a copy.
+
+    `fsync` before the rename is what makes that true after a power loss
+    rather than only after a crash — without it the rename can reach the
+    disk before the bytes do.
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", newline=newline, dir=directory,
+        prefix=os.path.basename(path) + ".", suffix=".tmp", delete=False)
+    try:
+        with handle:
+            yield handle
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(handle.name, path)
+    except BaseException:
+        # Leave the destination untouched. A failed write must not be
+        # visible at all, which is the whole point of writing aside.
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
+
 def write_json(rows: Sequence[Any], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    with _atomic(path) as f:
         json.dump([asdict(r) for r in rows], f, ensure_ascii=False, indent=2)
 
 
@@ -321,11 +426,11 @@ def write_csv(rows: Sequence[Any], path: str, row_cls: Type = Post) -> None:
     # The header comes from `row_cls`, not from the first row, so an empty
     # run still writes the columns of the mode that produced it.
     fieldnames = [f.name for f in fields(row_cls)]
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    with _atomic(path, newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for r in rows:
-            writer.writerow({k: _csv_value(v) for k, v in asdict(r).items()})
+            writer.writerow({k: _csv_cell(v) for k, v in asdict(r).items()})
 
 
 # Exit code used when a run completes but produced nothing. Distinct from 1
@@ -418,7 +523,7 @@ def write_run_meta(out_prefix: str, meta: dict) -> str:
     both complete, and between runs of different `mode`.
     """
     path = f"{out_prefix}.meta.json"
-    with open(path, "w", encoding="utf-8") as f:
+    with _atomic(path) as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"[+] Wrote run metadata -> {path} (status={meta.get('status')})")
     return path
@@ -590,6 +695,21 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
     # names has a hole for every name nobody added to it.
     complete = stop_reason in COMPLETE_STOP_REASONS and not pages_failed
     row_cls = ROW_CLASS_BY_MODE.get(mode, Post)
+
+    # Declared, not discovered. The CSV neutralises a cell a spreadsheet
+    # would execute; the JSON does not, so the two outputs of one run can
+    # differ by exactly this many cells and the sidecar says by how many.
+    # Counted from the rows themselves, before `save`, so `save` keeps
+    # returning an exit code and no caller changes shape.
+    if fmt in ("csv", "both"):
+        escaped = count_csv_escapes(rows, row_cls)
+        extra = dict(extra or {})
+        extra["csv_cells_escaped"] = escaped
+        if escaped:
+            print(f"[i] {escaped} CSV cell(s) began with a formula character "
+                  f"and were prefixed with an apostrophe so a spreadsheet "
+                  f"reads them as text. The JSON is untouched — see "
+                  f"csv_cells_escaped in the sidecar.")
     rc = save(rows, out_prefix, fmt, allow_empty=allow_empty, row_cls=row_cls)
     wrote_output = bool(rows) or allow_empty
 

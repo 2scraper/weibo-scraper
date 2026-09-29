@@ -10,7 +10,55 @@ notes lead with it.
 
 ## [Unreleased]
 
+### Added
+- **A browserless CLI: `python weibo_api.py --mode hot --pages 3`.** The
+  README's central claim is that none of the paid products is needed for
+  these three modes, and until now no COMMAND stood behind it —
+  `WeiboClient` was library-only and every runnable entry point launched
+  Chromium. Verified live: all three modes, 30 / 38 / 20 rows, output
+  column-for-column identical to the browser engines' (36 columns), and
+  the sidecar records `transport: "http"` so a consumer can tell which
+  path produced a file. It is a fourth command rather than an
+  `--engine http` flag on the three engines, whose one identical flag set
+  the suite asserts in both directions. It offers a SUBSET of the family
+  flags and deliberately omits `--cdp-endpoint`, `--fingerprint`,
+  `--fp-*` and `--headless`: those describe a browser, and there is none
+  here.
+
 ### Fixed
+- **Every file is now written atomically**, to a temporary file beside the
+  target and then renamed over it, with an `fsync` first. `open(path,
+  "w")` truncates BEFORE writing, so a crash, a kill or a full disk
+  halfway through left a shorter file where a complete one had been —
+  breaking the same promise `save()` keeps when it refuses to overwrite
+  good output with an empty result. Raised by a third-party audit, which
+  ranked it last; it belongs first. The sidecar is covered too, which the
+  audit did not mention and which matters more: it is the file a consumer
+  branches on. Measured across the family the same day: 37 of 43 repos
+  write in place. The implementation is lifted from the six that do not.
+- **CSV cells that begin `=`, `+`, `-` or `@` are neutralised** with a
+  leading apostrophe, so a spreadsheet reads them as text rather than
+  executing them. The text on this site is written by whoever wrote the
+  post, so a payload aimed at somebody else's export is ordinary rather
+  than hypothetical. **The JSON is untouched** — it carries the site's
+  bytes — and the run's sidecar records `csv_cells_escaped`, so the
+  divergence between the two outputs is declared rather than discovered.
+  Measured: 1 cell in 454 rows from earlier runs, 2 in a live 30-row run.
+  A negative number stays a number; escaping it would turn a count into
+  text. Family-wide: 0 of 43 repos did this.
+- **A usage error now exits 2, not 1.** Every CLI raised a bare
+  `SystemExit("message")` for a missing or unreadable `--url`, which exits
+  1 — the code for a crash in this project's own table — while argparse's
+  errors in the same command already exited 2. Four call sites in each of
+  the four CLIs.
+- **`--mode hot` no longer logs "page N".** That feed answers `max_id: 1`
+  forever and re-rolls, so N is N fetches of a moving feed; the log now
+  says `fetch 1`, `fetch 2`, and the README warns at the example rather
+  than 160 lines below it. The FLAG keeps its name: `--pages` is the
+  family contract across ~30 repos and this repo's own suite asserts the
+  three engines declare exactly that set, so renaming it here would break
+  the one thing that makes the family comparable.
+
 - **The Scraper API engine failed on every `--wait-text` / `--wait-element` /
   `--wait-state` call, and was billed for it.** It sent `waitFor` as a
   JSON-encoded string; measured 2026-09-23 the live API answers that with
