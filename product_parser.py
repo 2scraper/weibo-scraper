@@ -2,20 +2,20 @@
 product_parser.py
 -----------------
 Everything this repo knows about Weibo. If you are adding site knowledge
-anywhere else, it belongs here (CLAUDE.md §1).
+anywhere else, it belongs here.
 
 Where the data comes from
 --------------------------
 Weibo publishes **zero** JSON-LD. Counted 2026-09-21 across five captures —
 the hot feed, the hot band, the hot-search sidebar, a profile and a
 waterfall page — `application/ld+json` appears 0 times. So the usual
-"structured data first, CSS fallback second" (§4) does not apply: there is
+"structured data first, CSS fallback second" does not apply: there is
 no structured block to read and nothing to fall back to.
 
 What there is instead is better. Weibo's own front end is a React app that
 renders nothing server-side and fetches everything from `/ajax/` endpoints,
 so the site hands out clean JSON that is RICHER than anything it paints —
-CLAUDE.md §21's "ask what the front end calls before assuming a browser",
+the rule "ask what the front end calls before assuming a browser",
 answered the same way the sibling bbb-scraper answered it. Every function
 below parses that JSON. No HTML is parsed at all, and BeautifulSoup is
 imported for exactly one job: stripping the `<a>` wrapper off the posting-client string.
@@ -110,12 +110,13 @@ SOURCE = "weibo.com"
 
 API_BASE = "https://weibo.com/ajax"
 
-# The hot feed. `group_id` and `containerid` are both 102803 — the site's id
-# for the public "推荐" (recommended) feed — and `extparam` is what its own
-# front end sends. `count` is a ceiling the server ignores upward: it
+# The hot feed. `group_id` and `containerid` are both 102803 by default —
+# the site's id for the public "推荐" (recommended) feed — and `extparam` is
+# what its own front end sends. `--category` substitutes another group id;
+# only the default was verified. `count` is a ceiling the server ignores upward: it
 # answered 10 posts to count=25 on every call measured.
 HOT_FEED_URL = (API_BASE + "/feed/hottimeline?since_id=0&refresh=0"
-                "&group_id=102803&containerid=102803"
+                "&group_id={group}&containerid={group}"
                 "&extparam=discover%7Cnew_feed&max_id={max_id}&count={count}")
 
 USER_FEED_URL = API_BASE + "/profile/getWaterFallContent?uid={uid}&cursor={cursor}"
@@ -134,8 +135,16 @@ VISITOR_INCARNATE_URL = (
     "&w=2&c=095&gc=&cb=cross_domain&from=weibo&_rand={rand}")
 
 
-def hot_feed_url(max_id: int = 0, count: int = 25) -> str:
-    return HOT_FEED_URL.format(max_id=int(max_id), count=int(count))
+DEFAULT_FEED_GROUP = "102803"
+
+
+def hot_feed_url(max_id: int = 0, count: int = 25,
+                 group: Optional[str] = None) -> str:
+    group = str(group or DEFAULT_FEED_GROUP)
+    if not group.isdigit():
+        raise ValueError(f"a feed group id is digits only, got {group!r}")
+    return HOT_FEED_URL.format(max_id=int(max_id), count=int(count),
+                               group=group)
 
 
 def user_feed_url(uid: str, cursor: Any = 0) -> str:
@@ -215,8 +224,8 @@ def post_id_from_url(url: str) -> Tuple[Optional[str], Optional[str]]:
 def is_supported_host(url: str) -> Tuple[bool, str]:
     """Whether this repo can read `url`, and why not when it cannot.
 
-    The reason is returned rather than a bare False because CLAUDE.md §5
-    records what a bare refusal costs: "is not a Weibo site" is FALSE of
+    The reason is returned rather than a bare False because a bare
+    refusal has a cost: "is not a Weibo site" is FALSE of
     `m.weibo.cn` — it is very much Weibo — and sends the reader looking for
     a typo. The honest refusal names the route.
     """
@@ -245,7 +254,7 @@ def is_supported_host(url: str) -> Tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 # Markers that mean the SITE refused, counted on pages known to be good
-# before any of them was adopted (CLAUDE.md §18).
+# before any of them was adopted.
 #
 # The count that shaped this set, 2026-09-21, over 6 served responses (hot
 # feed, waterfall, profile, comments, hot search, a profile HTML page) and 4
@@ -270,9 +279,9 @@ def is_supported_host(url: str) -> Tuple[bool, str]:
 # profile HTML carries its login widget's GeeTest configuration whether or
 # not anything is being challenged, so the two most obvious captcha markers
 # on a Chinese site are exactly backwards here — a marker that fires on good
-# pages and is absent from the bad ones is worse than no marker at all
-# (§18). They are not in the set. This is the third site in this family
-# where a recommended marker turned out inverted (§23), and the first where
+# pages and is absent from the bad ones is worse than no marker at all.
+# They are not in the set. This is the third site in this family
+# where a recommended marker turned out inverted, and the first where
 # it was caught before it shipped rather than after.
 #
 # Every Cloudflare marker this template suggests is 0 on both sides. Weibo
@@ -287,8 +296,8 @@ BOT_CHALLENGE_MARKERS = (
 
 # Markers for a challenge Weibo COULD render and was not observed rendering.
 #
-# Anchored on the two vendors the site ACTUALLY loads (CLAUDE.md §18:
-# build the set from what you find on the site). Weibo wires BOTH NetEase
+# Anchored on the two vendors the site ACTUALLY loads (build the set from
+# what you find on the site). Weibo wires BOTH NetEase
 # Yidun and GeeTest v4 into its own chrome and preloads them on pages it
 # serves normally — counted 2026-09-21 on a profile page behind a visitor
 # cookie: `CAPTCHA_TYPE = 'yidun'` x4, `static.geetest.com/v4/gt4.js` x1,
@@ -307,7 +316,7 @@ BOT_CHALLENGE_MARKERS = (
 # which of the two fired, and so that nobody reads the empty measurement as
 # proof that Weibo has no captcha. It has one — its login page loads GeeTest
 # — it simply does not put it in front of these routes for an anonymous
-# reader. CLAUDE.md §19: "unsolvable" is a property of a PAGE, never of a
+# reader. "unsolvable" is a property of a PAGE, never of a
 # vendor, and "not implemented here" is a TODO rather than a limitation.
 #
 # These are deliberately anchored to a CHALLENGE's vocabulary rather than to
@@ -335,7 +344,7 @@ def detect_bot_challenge(html: Optional[str]) -> Optional[str]:
     """Name the refusal marker present in a response, or None.
 
     Reads a BOUNDED prefix and unescapes HTML entities over it first, which
-    is CLAUDE.md §20's lesson: an edge can entity-escape the punctuation in
+    is this family's lesson: an edge can entity-escape the punctuation in
     a marker (`https&#58;&#47;&#47;…`) so that a literal matches a browser's
     DOM and silently misses the same page fetched by an HTTP client.
     Unescaping the whole body instead would be both wasteful on a 1.8 MB
@@ -459,7 +468,7 @@ def looks_truncated(text: Optional[str]) -> bool:
     **Every post ends in a zero-width space**, truncated or not. Weibo
     appends one to essentially everything it serves, so the mark says
     nothing about whether a body is complete — a marker that matches every
-    page is worse than no marker at all (CLAUDE.md §18), and this one
+    page is worse than no marker at all, and this one
     matches 40 of 40.
 
     It survives as an OUTPUT-CLEANLINESS check, which is a different job:
@@ -473,7 +482,7 @@ def looks_truncated(text: Optional[str]) -> bool:
 def _int_or_none(v: Any) -> Optional[int]:
     """A counter as an int, or None — never a defaulted 0.
 
-    CLAUDE.md §21: a numeric field whose absent state is 0 drags every
+    A numeric field whose absent state is 0 drags every
     average a consumer computes. Weibo sends real integers on every post
     measured, so this mostly passes them through; what it refuses to do is
     invent a zero for a key that was not there.
@@ -677,8 +686,8 @@ def parse_hot_feed(payload: Any, page: Optional[int] = None) -> List[Post]:
     """`/ajax/feed/hottimeline` -> rows.
 
     `position` is 1-based within this fetch and `page` is threaded in from
-    the engine. Both are needed and neither is sufficient: CLAUDE.md §18
-    records a run where `page` was 1 on every row of a two-page run, so 60
+    the engine. Both are needed and neither is sufficient: a sibling
+    recorded a run where `page` was 1 on every row of a two-page run, so 60
     of 119 rows claimed a position another row already held. The suite
     asserts the pair is unique across a multi-page run.
     """
@@ -850,8 +859,8 @@ def apply_longtext(row: Post, full_text: Optional[str],
 
     Refuses to SHORTEN a row either way. If the recovered text is no longer
     than the inline text, the reply was about something else — and
-    overwriting a correct row with a worse one is the failure CLAUDE.md §4
-    names when two views of one value disagree.
+    overwriting a correct row with a worse one is the failure to avoid
+    when two views of one value disagree.
     """
     if not reached:
         row.text_source = "longtext_failed"
@@ -906,8 +915,8 @@ def rows_for_mode(mode: str, payload: Any, page: Optional[int] = None,
     """`(rows, continuation)` for whichever mode is running.
 
     One entry point the engines share, so that three of them cannot
-    disagree about which parser a mode uses — the drift CLAUDE.md §1 says
-    to prevent by naming the OPERATION once.
+    disagree about which parser a mode uses — drift that is prevented by
+    naming the OPERATION once.
     """
     if mode == "hot":
         return parse_hot_feed(payload, page=page), None

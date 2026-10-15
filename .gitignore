@@ -15,8 +15,8 @@ weibo_posts.*
 weibo_posts_*.*
 
 # --- scratch directories a run drops captures into -----------------------
-# Keyed on the KIND of directory, not on one name somebody chose. CLAUDE.md
-# §24 records a sibling that staged a 1.5 MB raw dump on its first commit
+# Keyed on the KIND of directory, not on one name somebody chose. A sibling
+# repo staged a 1.5 MB raw dump on its first commit
 # through `live/`, because the pattern list held `live_results/` and every
 # other entry was also a name. Measured here on 2026-09-21 before this
 # block existed: live/, out/, output/, runs/, results/, tmp/, scratch/ and
@@ -41,7 +41,7 @@ captures/
 # landing page is negated by name, because this family commits it. The
 # first draft of this rule claimed in its own comment that the landing page
 # "belongs in git" while silently ignoring it, which is the over-broad rule
-# §24 warns about: a pattern this wide needs its negative half written down
+# that becomes a problem: a pattern this wide needs its negative half written down
 # and tested, or it becomes a rule somebody switches off.
 /*.html
 !landing.html
@@ -115,7 +115,7 @@ secrets*
 # recoverable only because that repo was private at the time. On 2026-09-17
 # a sibling had an untracked `.env.bak` holding a 32-hex key in a PUBLIC
 # repository, one `git add -A` from publication. Craigslist was fixed then
-# and the fix never reached anyone else, which is §16's rule unapplied: when
+# and the fix never reached anyone else, which is this family's rule unapplied: when
 # you fix one, check the siblings.
 .env*
 !.env.example

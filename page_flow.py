@@ -2,7 +2,7 @@
 page_flow.py
 ------------
 The retry / solve / blocked decision, as DATA rather than as three copies of
-an if-chain (CLAUDE.md §1).
+an if-chain.
 
 Weibo answers a request six ways, and five of them want a different response:
 
@@ -50,7 +50,7 @@ Nothing here imports a browser, and **no JavaScript crosses this boundary**:
 Selenium's `execute_script` takes a function BODY with an explicit `return`
 while Playwright and pyppeteer take `() => expr`, so a shared snippet would
 quietly acquire one driver's dialect. The callbacks below are named for the
-OPERATION instead, and each engine spells it in its own dialect (§1).
+OPERATION instead, and each engine spells it in its own dialect.
 """
 
 import json
@@ -59,8 +59,8 @@ import re
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
-from product_parser import (MAX_PAGES, detect_bot_challenge,  # noqa: F401
-                            detect_page_state)
+from product_parser import (CHALLENGE_MARKERS, MAX_PAGES,  # noqa: F401
+                            detect_bot_challenge, detect_page_state)
 
 log = logging.getLogger("page_flow")
 
@@ -71,7 +71,7 @@ log = logging.getLogger("page_flow")
 
 # How many post records mean "this response is a feed".
 #
-# `> 1` on purpose, per CLAUDE.md §5: waiting for ONE match resolves on
+# `> 1` on purpose, per Waiting for ONE match resolves on
 # something unrelated long before the feed is really there. Measured
 # 2026-09-21: /ajax/feed/hottimeline returns 10 posts to `count=25` (the
 # parameter is a ceiling the site ignores upward), and a waterfall cursor
@@ -84,7 +84,7 @@ MIN_CARD_MATCHES = 4
 # These three modes all read JSON rather than markup, so the anchor is the
 # payload itself: the engines navigate to the API URL and wait for a body
 # that parses as JSON carrying the mode's own list key. There is no CSS
-# selector to wait for and inventing one would be the §4 mistake of
+# selector to wait for and inventing one would be the mistake of
 # anchoring on markup that no run reads.
 READY_KEY_HOT = "statuses"
 READY_KEY_USER = "data.list"
@@ -126,7 +126,7 @@ def wait_for_count(count: Callable[[str], int], selector: str, minimum: int,
     """Poll `count(selector)` until it reaches `minimum` or time runs out.
 
     The caller supplies the counting primitive, so this never evaluates a
-    JavaScript STRING — CLAUDE.md §18's CSP trap, where a site whose policy
+    JavaScript STRING — this family's CSP trap, where a site whose policy
     omits `unsafe-eval` killed a run with `EvalError` on its most obvious
     URL. Weibo's own policy was not measured to forbid it and the rule is
     followed anyway: a readiness wait that works under any CSP costs nothing
@@ -157,7 +157,7 @@ def wait_for_count(count: Callable[[str], int], selector: str, minimum: int,
 # x1, `weibo.com/login` x1, `passport.weibo.com/visitor` x0.
 #
 # `detect_bot_challenge` had the right spellings all along, so the two
-# detectors disagreed about the same page — CLAUDE.md §19: when a static
+# detectors disagreed about the same page — When a static
 # and a live detector disagree, the one missing a spelling is usually the
 # static one.
 #
@@ -173,7 +173,7 @@ _LOGIN_PROSE = re.compile(
 # was never reached — and it wants a different answer from a block: a dead
 # proxy needs a DIFFERENT exit, a timeout needs another try at the same one.
 #
-# CLAUDE.md §18 records why a title check cannot do this job: Chromium's
+# A title check cannot do this job: Chromium's
 # error page carries the requested hostname in its own `<title>`, so a page
 # that never left the browser reads as a page the site served.
 _CHROME_ERROR = re.compile(
@@ -186,7 +186,7 @@ def classify(body: Optional[str], status: Optional[int] = None,
     """Name what came back, from the response body and its status code.
 
     `status` is positional and second, and every caller passes it that way.
-    That is not a stylistic note: CLAUDE.md §17 records a sibling repo where
+    That is not a stylistic note: a sibling repo had
     two of three engines called this `classify(html, url=…)`, putting the URL
     where the status belongs, and BOTH crashed on their first fetch while
     every offline check stayed green. The suite here binds all three engines'
@@ -226,7 +226,7 @@ def classify(body: Optional[str], status: Optional[int] = None,
         # same cookies, fetched as an XHR, returns the payload. It is
         # neither a block nor a login wall nor geography, and calling it
         # either would send a reader hunting for a proxy problem or an
-        # account they do not need (CLAUDE.md §18's whole argument for
+        # account they do not need (this family's whole argument for
         # classifying by what a signal PROVES).
         if status == 403 and payload.get("error"):
             return "bad_request"
@@ -235,6 +235,15 @@ def classify(body: Optional[str], status: Optional[int] = None,
     # Not JSON. The HTML visitor gate is the expected case: every weibo.com
     # HTML route redirects a cold session to passport's visitor page, which
     # is a handshake rather than a refusal.
+    # A RENDERED challenge (GeeTest v4 or NetEase Yidun runtime markup) is
+    # checked before the visitor and login fallbacks, under any status. Only
+    # the rendered-widget vocabulary counts: the vendors' names and loaders
+    # are on pages Weibo serves normally, and those must not read as a
+    # challenge. Without this branch a challenge body was retried as
+    # `unknown` and the run ended as "never reached" (exit 5) instead of
+    # blocked (exit 3).
+    if detect_bot_challenge(text) in CHALLENGE_MARKERS:
+        return "challenge"
     if _LOGIN_PROSE.search(text[:8000]):
         return "needs_visitor"
     if status == 403:
@@ -292,7 +301,7 @@ def _has_rows(payload: dict) -> bool:
     # `--mode post` on its first live run, since the id lookup that mode
     # needs goes through exactly this route. Checked FIRST, because it is
     # the unambiguous positive signal and the list checks below are the
-    # weaker, shape-based ones (§17's ordering rule).
+    # weaker, shape-based ones (this family's ordering rule).
     if payload.get("mblogid") or payload.get("mid"):
         return True
     if payload.get("statuses"):
@@ -321,7 +330,7 @@ STATE_POLICY = {
     # handshake is one POST and one GET and it succeeded 5 of 5 from a
     # datacenter address. Not `blocked`, because a run that clears it on the
     # retry was never blocked — reporting exit 3 for a state the next
-    # request fixes is the false alarm §17's classification-order trap is
+    # request fixes is the false alarm this family's classification-order trap is
     # about.
     "needs_visitor":  {"retry": True,  "solve": False, "blocked": False, "parse": False},
     # HTTP 403 with the site's login prose, to a session that already holds
@@ -372,6 +381,47 @@ def should_parse(state: str) -> bool:
     return STATE_POLICY.get(state, STATE_POLICY["unknown"])["parse"]
 
 
+def blocked_hint(state: str) -> str:
+    """One sentence on why a blocked state is not retried, for the log."""
+    if state == "challenge":
+        return ("a rendered challenge is in front of the content; this repo "
+                "solves reCAPTCHA only and does not implement GeeTest or "
+                "NetEase Yidun solving.")
+    return "this wants an ACCOUNT, not a different address or another attempt."
+
+
+# The stop reason for a page the site SERVED with rows in it that the parser
+# could not read. `classify` answers `content` only when the payload holds a
+# non-empty list (an empty list is `empty`), so `content` plus zero parsed
+# rows means the site's shape changed under the parser — not an empty feed.
+# Not a complete reason: it gives exit 5 on page 1 and a partial run (exit 6)
+# on a later page, never exit 4.
+PARSER_FAILURE_REASON = "parser_found_nothing"
+
+
+def served_rows_we_could_not_read(state: str, rows) -> bool:
+    """Whether a page stated rows that the parser then lost."""
+    return state == "content" and not rows
+
+
+def unresolved_post_outcome(state: str):
+    """`(blocked, stop_reason)` when `--mode post` cannot resolve its `mid`.
+
+    The comments endpoint needs the numeric id, and `/statuses/show` is what
+    turns a post URL into one. Its answer decides the exit, through the
+    shared `finish_run` mapping rather than a bare exit 4:
+
+      a wall (login, challenge)  blocked             -> exit 3
+      `empty` (no such post)     post_not_found      -> exit 4, a real answer
+      anything else              mid_not_resolved_*  -> exit 5, never reached
+    """
+    if counts_as_blocked(state):
+        return True, state
+    if state == "empty":
+        return False, "post_not_found"
+    return False, f"mid_not_resolved_{state or 'unknown'}"
+
+
 def needs_visitor_cookie(state: str) -> bool:
     """Whether the fix for this state is the passport handshake.
 
@@ -386,7 +436,7 @@ def needs_visitor_cookie(state: str) -> bool:
 # False here, and CONSULTED rather than merely documented — the engines read
 # it, so this really does stop the retry loop. (A sibling repo carried this
 # constant with a paragraph of justification and no reader, which is the
-# same defect as dead code that looks load-bearing: §17. The suite asserts
+# same defect as dead code that looks load-bearing. The suite asserts
 # it has a consumer outside this module.)
 #
 # False because on Weibo the only state that reaches it is `login_wall`, and
@@ -415,7 +465,7 @@ VISITOR_MINTS_PER_PAGE = 1
 # for the same answer.
 #
 # This constant has read like an enforced limit across this whole family and
-# was NOT one (CLAUDE.md §23): every engine calls the captcha handler TWICE
+# was NOT one: every engine calls the captcha handler TWICE
 # per attempt — once before the response is classified, once after — and
 # only the second call was ever counted, so one page could buy three solves
 # on a site where a challenge renders on every fetch. `SolveBudget` below is
@@ -428,8 +478,11 @@ SOLVES_PER_PAGE = 1
 class SolveBudget:
     """One page's allowance of paid solves, spent through a single counter.
 
-    Created per page-attempt by each engine and passed to BOTH captcha call
-    sites, so the two cannot each believe they are the first.
+    Created ONCE per page, before that page's retry loop, by each engine
+    and passed to BOTH captcha call sites. A retry or an exit rotation does
+    not reset it: re-creating it per attempt let a widget that stayed on the
+    page be bought again on every attempt, three purchases against an
+    allowance of one.
     """
 
     def __init__(self, limit: int = SOLVES_PER_PAGE):
@@ -454,8 +507,7 @@ def pagination_is_addressable(url: str) -> bool:
     """Whether page N of this feed can be fetched without walking to it.
 
     FALSE for the hot feed and TRUE for nothing else this repo reads, which
-    is why the question is asked per URL rather than per site (CLAUDE.md
-    §18).
+    is why the question is asked per URL rather than per site.
 
     Measured 2026-09-21. `/ajax/feed/hottimeline` answers `max_id: 1` to
     every request, including the request that passes `max_id=1` back to it,
@@ -467,7 +519,7 @@ def pagination_is_addressable(url: str) -> bool:
     `--mode user` walks a CURSOR, which is addressable only in the sense
     that the site hands you the next one — page 5's cursor is unknowable
     until page 4 arrives — so it chains link-to-link and refuses
-    `--concurrency` above 1 for the reason §7 gives: a worker cannot be
+    `--concurrency` above 1 for that reason: a worker cannot be
     handed a page whose address does not exist yet.
     """
     parsed = urlparse(url or "")
@@ -495,7 +547,7 @@ def concurrency_limit(cdp_endpoint: Optional[str]) -> Optional[int]:
 
     The Scraping Browser API allows ONE live connection per profile, so N
     workers sharing a `pid` collide with `profile_locked`. Several `pid`s,
-    one run each, is the way to parallelise that path (§7).
+    one run each, is the way to parallelise that path.
 
     `--mode hot` and `--mode user` are capped at 1 by the engines for a
     second, independent reason — neither feed is addressable, so there is

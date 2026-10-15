@@ -13,12 +13,12 @@
 # starts scoring datacenter addresses, the badge goes red the next day and
 # the claim is retested without anyone having to remember to.
 #
-# CLAUDE.md §21: a canary that CAN pass without a credential must never be
+# A canary that CAN pass without a credential must never be
 # gated on one. The inverse rule — a canary that cannot pass must SKIP
 # rather than fail — does not apply here, because this one can.
 #
 # BEFORE TRUSTING THE BADGE, dispatch this once by hand and read the log
-# (CLAUDE.md §15 step 6). The measurement above is from a Hetzner address in
+# (and dispatch it again after any change to the fetch path). The measurement above is from a Hetzner address in
 # Finland; a GitHub runner is a different network, and whether Weibo treats
 # it the same way is NOT something this repo has measured. The first
 # dispatch is what turns that into a fact. Note that `workflow_dispatch`
@@ -82,7 +82,10 @@ jobs:
             4) echo "::error::exit 4 — the feed was served and held nothing. "\
                     "Served-but-empty is a parser question, not an access "\
                     "one: read the dumped payload." ;;
-            5) echo "::error::exit 5 — a remote service failed, not this code." ;;
+            5) echo "::error::exit 5 — nothing was gathered: a transport or "\
+                    "remote failure, or the feed was served and the parser "\
+                    "could not read it (stop_reason parser_found_nothing). "\
+                    "Read the sidecar and the dumped payload." ;;
             6) echo "::error::exit 6 — partial. Some fetches failed; the "\
                     "sidecar names which." ;;
             *) echo "::error::exit $code" ;;
@@ -225,6 +228,47 @@ jobs:
           print("ok")
           PY
 
+      # Comments on one of the posts the user run just read, so no post id
+      # is hard-coded into the workflow: the most-commented row is picked.
+      - name: Comments mode
+        id: post
+        run: |
+          set +e
+          url=$(python -c "import json; rows=json.load(open('canary_user.json')); print(max(rows, key=lambda r: r.get('comments_count') or 0)['url'])")
+          echo "post: $url"
+          python playwright_scraper.py \
+            --mode post --url "$url" --pages 1 --out canary_post
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Assert comments
+        run: |
+          code="${{ steps.post.outputs.exit_code }}"
+          [ "$code" = "0" ] || { echo "::error::comments mode exited $code"; exit "$code"; }
+          python - <<'PY'
+          import json, sys
+          rows = json.load(open("canary_post.json"))
+          meta = json.load(open("canary_post.meta.json"))
+          bad = []
+          if meta["status"] != "complete":
+              bad.append(f"status {meta['status']!r}")
+          if len(rows) < 5:
+              bad.append(f"only {len(rows)} comments on the most-commented post")
+          if len({r["comment_id"] for r in rows}) != len(rows):
+              bad.append("comment_id not unique")
+          if len({r["parent_sku"] for r in rows}) != 1:
+              bad.append("comments of more than one post")
+          for col in ("comment_id", "title", "author_id", "created_at"):
+              missing = sum(1 for r in rows if r.get(col) in (None, ""))
+              if missing:
+                  bad.append(f"{col} empty on {missing} of {len(rows)} rows")
+          print(f"comments {len(rows)}  stop_reason {meta['stop_reason']}")
+          if bad:
+              for b in bad:
+                  print("FAILED:", b)
+              sys.exit(1)
+          print("ok")
+          PY
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -232,4 +276,68 @@ jobs:
           path: |
             canary_user.json
             canary_user.meta.json
+            canary_post.json
+            canary_post.meta.json
+          if-no-files-found: warn
+
+  browserless:
+    name: browserless CLI (no browser, no credentials)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # The README's first command. No Chromium is installed in this job, so
+      # a pass proves the plain-HTTPS path on its own.
+      - name: Run
+        id: run
+        run: |
+          set +e
+          python weibo_api.py --mode hot --pages 2 --delay 2 \
+            --format both --out canary_http
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Assert
+        run: |
+          code="${{ steps.run.outputs.exit_code }}"
+          [ "$code" = "0" ] || { echo "::error::weibo_api.py exited $code (3 blocked, 4 empty, 5 nothing obtained, 6 partial)"; exit 1; }
+          python - <<'PY'
+          import json, sys
+          rows = json.load(open("canary_http.json"))
+          meta = json.load(open("canary_http.meta.json"))
+          bad = []
+          if meta["status"] != "complete":
+              bad.append(f"status {meta['status']!r}")
+          if meta.get("transport") != "http":
+              bad.append("the sidecar does not say transport: http")
+          # A floor: about 10 posts per fetch, and the two fetches of a
+          # re-rolling feed can overlap.
+          if len(rows) < 10:
+              bad.append(f"only {len(rows)} rows from 2 fetches")
+          for col in ("sku", "mid", "url", "title", "author_id"):
+              missing = sum(1 for r in rows if r.get(col) in (None, ""))
+              if missing:
+                  bad.append(f"{col} empty on {missing} of {len(rows)} rows")
+          print(f"rows {len(rows)}  stop_reason {meta['stop_reason']}")
+          if bad:
+              for b in bad:
+                  print("FAILED:", b)
+              sys.exit(1)
+          print("ok")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: canary-browserless
+          path: |
+            canary_http.json
+            canary_http.meta.json
           if-no-files-found: warn

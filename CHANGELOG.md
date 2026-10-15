@@ -10,6 +10,25 @@ notes lead with it.
 
 ## [Unreleased]
 
+> **Behaviour changes in this section.**
+> - Output files are created with the mode your umask gives (`0644` under
+>   the usual `022`) instead of `0600`, and an existing file keeps its mode.
+> - A served page whose posts the parser cannot read now ends as
+>   `stop_reason: parser_found_nothing`: exit `5` on the first page, `6`
+>   later. It used to be exit `4` (empty) or `0` (complete).
+> - `--mode post`: a `/statuses/show` lookup that is refused is exit `3`,
+>   one that fails is exit `5`, and a post that does not exist is exit `4`.
+>   Every failed lookup used to be exit `4`.
+> - A rendered GeeTest or NetEase Yidun challenge is now `blocked` (exit
+>   `3`); it used to be retried as an unknown page and end as exit `5`.
+> - Newly refused flag values (exit `2`, naming the flag): negative
+>   `--retries`, `--delay`, `--retry-delay`, `--proxy-block-retries`;
+>   `--concurrency` below 1 or above 1 (it used to warn and run with 1);
+>   a non-numeric `--category`; `--fingerprint` on the Puppeteer and
+>   Selenium engines, which never applied it; and in
+>   `scraper_api_client.py` negative `--retries`/`--retry-delay` and a
+>   `--timeout` below 1.
+
 ### Added
 - **A browserless CLI: `python weibo_api.py --mode hot --pages 3`.** The
   README's central claim is that none of the paid products is needed for
@@ -26,6 +45,44 @@ notes lead with it.
   here.
 
 ### Fixed
+- **One paid solve per page, across all its retries.** The solve allowance
+  was created per attempt, so a page could buy a solve on every attempt.
+  It is now created once per page in all three engines. Under the default
+  `--solve-captcha when-blocked`, nothing is bought until a response has
+  been read and classified as a challenge; `always` also checks the landing
+  page before each attempt.
+- **A rendered challenge is classified as one.** The `challenge` state had
+  a policy row and no producer. The solve path builds reCAPTCHA tasks only;
+  this repo does not implement GeeTest v4 or NetEase Yidun solving, and the
+  README now says so.
+- **Failures outside the per-page guard no longer crash with exit 1.** A
+  timeout on the `--mode user` profile call (which only adds context
+  columns), on the `--mode post` lookup, or a visitor handshake that cannot
+  reach passport during a retry, is handled as a page or lookup failure, so
+  rows from earlier pages are still written.
+- **CSV formula escaping also covers a leading line feed**, and a
+  `csv_cells_escaped` value passed in by a caller is no longer overwritten.
+- **`--category` reaches the request.** It was accepted and ignored; the
+  hot feed's group id is now the one given (only the default `102803` is
+  verified). `weibo_api.py` accepts it too.
+- **`scraper_api_client.py` defaulted to `--mode profile`**, a mode its
+  parser does not have, and its `--category` help described behaviour it
+  does not have.
+- **pyppeteer applies `--locale`** (as Chromium's `--lang`), and an
+  authenticated `--proxy` falls back to CDP's `Fetch` domain when
+  `page.authenticate` fails because current Chromium lacks the method it
+  needs. That fallback is covered offline and not yet run against a live
+  proxy.
+- **The credential scan** judges its exclusions relative to the
+  repository, so a clone under a directory named `venv` no longer scans
+  zero files and passes; a scan that reads nothing now fails; and `.env*`
+  backups, `.json`, `.html` and `.csv` files are read.
+- `weibo_api.py` retries a transient answer (`--retries`, `--retry-delay`,
+  the same extra-attempt meaning as the engines) and never retries a wall.
+- Comments and help text that cited private working notes now state the
+  rule itself; a suite check keeps such citations out. Leftover wording
+  about prices and product pages was removed.
+
 - **Every file is now written atomically**, to a temporary file beside the
   target and then renamed over it, with an `fsync` first. `open(path,
   "w")` truncates BEFORE writing, so a crash, a kill or a full disk
@@ -98,6 +155,11 @@ notes lead with it.
 
 - `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
   that does not exist in this repo (it came with the copied core). Removed.
+
+### CI
+- The canary also runs `--mode post` on the most-commented post from the
+  user run, and the browserless `weibo_api.py`, each with row floors and
+  non-null core fields. `weibo_api.py` is in the `--help` checks.
 
 ## [0.1.0] — 2026-09-21
 
@@ -182,7 +244,7 @@ First release. Three modes, three engines, all run live against weibo.com.
   over HTTP from the LOCAL address and installed it into the remote
   browser. Measured in one session, the remote browser left from a
   residential US address (AS11776, California) while the handshake left
-  from a Finnish datacenter (AS24940) — CLAUDE.md §8's "issued against exit
+  from a Finnish datacenter (AS24940) — a cookie "issued against exit
   A, replayed from exit B", and it also wasted what the Scraping Browser is
   bought for, since the cookie IS the session identity. A remote session
   now navigates to weibo.com and lets the SITE run its own handshake.

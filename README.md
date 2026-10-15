@@ -281,8 +281,17 @@ marker set matches an injection.
 
 `--solve-captcha` is wired and defaults to `when-blocked`, and is expected
 never to fire. It is there because a challenge appearing on these routes
-later would be a change in the site rather than an impossibility. If one
-ever does appear, that is worth an issue.
+later would be a change in the site rather than an impossibility. Under
+`when-blocked` nothing is bought until a response has been read and found
+to be a challenge; `always` also checks the landing page before each
+request. Either way a page gets at most one paid solve, across all its
+retries.
+
+The solve path builds reCAPTCHA tasks only. **This repo does not implement
+GeeTest v4 or NetEase Yidun solving**, the two vendors Weibo loads, so a
+rendered GeeTest or Yidun widget in front of the content ends the run as
+blocked (exit `3`) rather than being solved. If one ever does appear, that
+is worth an issue.
 
 ---
 
@@ -347,7 +356,20 @@ through leaves the previous run's output exactly as it was, which is the
 same promise `--allow-empty` protects from the other side.
 
 **Exit codes:** `0` ok · `1` crash · `2` bad usage · `3` blocked ·
-`4` zero posts · `5` remote API error · `6` partial.
+`4` the site answered, and the answer was zero posts · `5` nothing was
+gathered and the content was never obtained (a transport failure, a remote
+API error, or a served page whose rows the parser could not read) ·
+`6` partial: rows were saved, then the run stopped early.
+
+A served page that holds posts the parser cannot read is recorded as
+`stop_reason: parser_found_nothing` — exit `5` on the first page, `6`
+later — never as an empty feed. In `--mode post`, a post that
+`/statuses/show` says does not exist is exit `4`; a lookup that was
+refused or failed is `3` or `5`.
+
+New files are created with the usual permissions for your umask (the same
+as any file your shell creates); a file that already exists keeps its
+mode.
 
 **A run that finds nothing writes nothing** — last night's good output is
 not replaced with an empty file. `--allow-empty` opts out.
@@ -363,8 +385,15 @@ codes, run status and rows; all three were run live.
 |---|---|---|---|
 | Reads the API without JavaScript | yes, `context.request` | no, in-page `fetch` | no, `execute_async_script` |
 | Authenticated `--cdp-endpoint` | yes | yes | **no** — see below |
-| Authenticated `--proxy` | yes | yes | **no**, stripped with a warning |
-| `--fingerprint` | yes | no | no |
+| Authenticated `--proxy` | yes | yes, not verified live (see below) | **no**, stripped with a warning |
+| `--fingerprint` | yes | no, refused | no, refused |
+
+**Puppeteer and an authenticated `--proxy`.** `page.authenticate` depends
+on a CDP method that current Chromium builds no longer provide. The engine
+tries it first and, only on that specific error, answers the proxy's auth
+challenge through CDP's `Fetch` domain instead. That fallback has not been
+run against a live proxy in this repository; use Playwright when an
+authenticated proxy matters.
 
 **Selenium cannot use an authenticated CDP endpoint.** Playwright's
 `connect_over_cdp` and Puppeteer's `browserWSEndpoint` take a full

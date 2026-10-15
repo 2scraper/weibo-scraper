@@ -18,7 +18,7 @@ Weibo publishes NO JSON-LD anywhere. Counted on 2026-09-21 across five
 captures (hot feed, hot band, hot search, a profile and a waterfall page):
 **zero** `application/ld+json` blocks. There is nothing to fall back FROM,
 because the site's own JSON API is the primary source and is richer than
-anything it renders — CLAUDE.md §4's "count the blocks first", answered.
+anything it renders — this family's "count the blocks first", answered.
 
 What the site calls things, and what this file calls them
 ---------------------------------------------------------
@@ -51,7 +51,7 @@ field that looked populated.
 
 So `title` carries the FULL text where one could be recovered, and
 `text_source` records which read produced it (`inline` / `longtext` /
-`longtext_failed`). This is CLAUDE.md §10's amazon `review_count` lesson:
+`longtext_failed`). This is a lesson a sibling repo learned on a review count:
 a column can be 100% populated and entirely wrong, and coverage will not
 tell you. Never write `text_raw` through without checking `isLongText`.
 
@@ -72,8 +72,7 @@ facts; that string is never read.
 Whether the integers themselves cap is UNVERIFIED: the largest figure in a
 254-post sample on 2026-09-21 was 104,804 likes and 751,449 reposts, and
 no post above a million appeared, so the ceiling was never exercised. A
-count this file cannot demonstrate is not a count it claims (CLAUDE.md
-§20: a column you never saw take its other value is not verified).
+count this file cannot demonstrate is not a count it claims (a column you never saw take its other value is not verified).
 """
 import contextlib
 import csv
@@ -231,7 +230,7 @@ class Post:
     # ---- where in the feed ----------------------------------------------
     # Which fetch this row came from and where it sat. `page` is threaded
     # in from the engine rather than defaulted: a page number that is 1 on
-    # every row of a multi-page run is the bug CLAUDE.md §18 names, and the
+    # every row of a multi-page run is a known bug, and the
     # suite asserts `page` + `position` is unique across a run.
     page: Optional[int] = None
     position: Optional[int] = None
@@ -305,10 +304,10 @@ LIST_CSV_SEPARATOR = " | "
 
 
 # Characters a spreadsheet reads as the start of a FORMULA rather than as
-# text. Tab and carriage return are here because some importers strip
-# leading whitespace before deciding, which hands the next character the
-# same power.
-_CSV_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+# text. Tab, carriage return and line feed are here because some importers
+# strip leading whitespace before deciding, which hands the next character
+# the same power.
+_CSV_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r", "\n")
 
 
 def _needs_csv_escape(value: Any) -> bool:
@@ -402,6 +401,19 @@ def _atomic(path: str, newline: Optional[str] = None):
             yield handle
             handle.flush()
             os.fsync(handle.fileno())
+        # `NamedTemporaryFile` creates the file 0600 and a rename keeps the
+        # temporary file's mode, so without this every output came out
+        # readable by its owner alone and an existing file lost its mode.
+        # An existing target keeps its own mode (someone may have set it on
+        # purpose); a new one gets what a plain `open()` would have given
+        # it under the current umask.
+        try:
+            mode = os.stat(path).st_mode & 0o7777
+        except OSError:
+            umask = os.umask(0)
+            os.umask(umask)
+            mode = 0o666 & ~umask
+        os.chmod(handle.name, mode)
         os.replace(handle.name, path)
     except BaseException:
         # Leave the destination untouched. A failed write must not be
@@ -465,12 +477,6 @@ EXIT_NO_PRODUCTS = 4
 # changes that. See page_flow.detect_page_state.
 EXIT_BLOCKED = 3
 
-# Exit code for a run that gathered SOME rows and then stopped early — a
-# page-load timeout, a 503 throttle, or a challenge on page 3 of 10. The
-# output file is still written (throwing away three good pages would be
-# worse), but it is not a complete picture, and a consumer that cannot tell
-# the difference will read the pages that were never fetched as products that
-# disappeared from the catalogue. See write_run_meta.
 # A REMOTE service failed — the Scraping Browser refusing the connection
 # (`profile_locked` is the common one: a profile allows a single live
 # connection), or the Scraper API answering an error. Distinct from 1 (a
@@ -481,6 +487,12 @@ EXIT_BLOCKED = 3
 # drifts.
 EXIT_API_ERROR = 5
 
+# Exit code for a run that gathered SOME rows and then stopped early — a
+# page-load timeout, a 503 throttle, or a challenge on page 3 of 10. The
+# output file is still written (throwing away three good pages would be
+# worse), but it is not a complete picture, and a consumer that cannot tell
+# the difference will read the pages that were never fetched as products that
+# disappeared from the catalogue. See write_run_meta.
 EXIT_PARTIAL = 6
 
 
@@ -559,7 +571,7 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     business rather than the run's: 人民日报 (153,313 posts claimed) yielded
     118 over six cursor pages and kept going, while 雷军 (21,947 claimed)
     returned 5 and then `next_cursor: -1` — an end of listing after five
-    rows. Both runs are `complete` in the sense CLAUDE.md §9 means: the
+    rows. Both runs are `complete` in the sense used here: the
     site served everything it would serve. Neither is the account's
     archive. So `statuses_claimed` (the site's own count for that account)
     goes in beside `products`, and a consumer can see 5-of-21,947 for what
@@ -595,7 +607,7 @@ def run_meta(status: str, stop_reason: str, pages_requested: int,
     }
     if extra:
         # Merged rather than nested under a key, so a consumer reads
-        # `shop_rating` at the top level beside `products`. Run fields win a
+        # `statuses_claimed` at the top level beside `products`. Run fields win a
         # name collision: a caller cannot accidentally overwrite `status`.
         meta.update({k: v for k, v in extra.items() if k not in meta})
     return meta
@@ -657,9 +669,16 @@ def save(rows: Sequence[Any], out_prefix: str, fmt: str,
 #
 # "single_page_mode" is complete by construction: one post's comments are
 # asked for once.
+#
+# "post_not_found" is `--mode post` asking `/statuses/show` for the post and
+# being told, as an answer, that there is none. A failed or refused lookup
+# is NOT this reason (see page_flow.unresolved_post_outcome).
+#
+# "parser_found_nothing" is deliberately absent: a served page that stated
+# rows the parser could not read is a failure, never an empty feed.
 COMPLETE_STOP_REASONS = ("completed", "pagination_exhausted", "no_new_products",
                          "cursor_exhausted", "feed_not_addressable",
-                         "single_page_mode")
+                         "single_page_mode", "post_not_found")
 
 
 def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
@@ -704,7 +723,9 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
     if fmt in ("csv", "both"):
         escaped = count_csv_escapes(rows, row_cls)
         extra = dict(extra or {})
-        extra["csv_cells_escaped"] = escaped
+        # Housekeeping goes UNDER the caller's keys: a value the caller
+        # passed under the same name is theirs and is not overwritten.
+        extra.setdefault("csv_cells_escaped", escaped)
         if escaped:
             print(f"[i] {escaped} CSV cell(s) began with a formula character "
                   f"and were prefixed with an apostrophe so a spreadsheet "

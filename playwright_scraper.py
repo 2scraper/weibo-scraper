@@ -56,7 +56,7 @@ front end is, and what gives a challenge somewhere to render if one ever
 appears — and then reads every payload through the context's own request
 API. That path carries the context's cookies and its proxy, and it uses no
 JavaScript at all, so it cannot trip over a Content-Security-Policy the
-way an evaluated string can (CLAUDE.md §18).
+way an evaluated string can.
 
 Worth knowing before "fixing" a 403 here: it is not a block, not a rate
 limit and not geography. It is the wrong KIND of request.
@@ -85,7 +85,7 @@ from dataclasses import dataclass, field
 from queue import Queue, Empty
 from typing import Any, Dict, List, Optional, Tuple
 
-# Imported at MODULE level on purpose. CLAUDE.md §10: an engine that
+# Imported at MODULE level on purpose. An engine that
 # imports its driver inside the launch path imports cleanly with no driver
 # installed, so the suite's "skipped, engine absent" group never fires and
 # the CI job that exists to catch a broken import cannot. The suite asserts
@@ -98,7 +98,7 @@ import page_flow
 import product_parser as P
 import weibo_api as W
 import env_config
-from output_writer import (EXIT_API_ERROR, EXIT_BLOCKED, EXIT_NO_PRODUCTS,
+from output_writer import (EXIT_API_ERROR, EXIT_BLOCKED,
                            Post, dedupe_by_key, finish_run)
 import proxy_pool
 from proxy_pool import ProxyPool
@@ -106,7 +106,7 @@ from proxy_pool import ProxyPool
 log = logging.getLogger("weibo.playwright")
 
 # --------------------------------------------------------------------------
-# Site constants — kept byte-identical across the three engines (§5)
+# Site constants — kept byte-identical across the three engines
 # --------------------------------------------------------------------------
 
 # How many post records mean "this response is a feed". See page_flow.
@@ -115,7 +115,7 @@ MIN_CARD_MATCHES = page_flow.MIN_CARD_MATCHES
 # Weibo publishes no "next page" link anywhere this repo reads: the hot
 # feed is not addressable at all and the user feed hands back a cursor in
 # its payload. So there is no NEXT_PAGE_SELECTOR, and inventing one would
-# be the §7 failure — pagination resting on a selector that can quietly die
+# be the classic failure — pagination resting on a selector that can quietly die
 # and report a complete run holding one page. Pagination here is layer 3
 # only: a terminating condition based on DATA.
 NEXT_PAGE_SELECTOR = None
@@ -149,7 +149,7 @@ NAV_TIMEOUT_MS = page_flow.CONTENT_TIMEOUT_MS
 def _chrome_ua(chromium_version: str) -> str:
     """Build a UA from the Chromium that is actually installed.
 
-    CLAUDE.md §8: the user agent comes from the browser, not a literal. A
+    The user agent comes from the browser, not a literal. A
     hardcoded version drifts from whatever is installed, and claiming an
     older Chrome than the JS engine and TLS handshake report is itself a
     mismatch worth more than the string is.
@@ -195,8 +195,8 @@ _PROXY_ERRORS = (
 def _proxy_failure(exc: Exception) -> str:
     """Name the proxy error in an exception, or "".
 
-    Its own function because CLAUDE.md §8 records what conflating this with
-    a timeout costs: Chromium reports a dead proxy as a GENERIC error, not
+    Its own function because conflating this with a timeout has a
+    recorded cost: Chromium reports a dead proxy as a GENERIC error, not
     as a timeout, and the two want opposite responses — a timeout deserves
     another try at the same exit, a dead proxy deserves a different one.
     Catching only the timeout type let this escape as a traceback.
@@ -216,10 +216,10 @@ class _BrowserSession:
     """One browser, one context, one exit — for this worker's lifetime.
 
     A worker owns its browser because Playwright's sync API ties a browser
-    to its creating thread (§7), and it owns ONE exit because a rotation is
+    to its creating thread, and it owns ONE exit because a rotation is
     a fresh browser: cookies a bot manager issued against exit A and
-    replayed from exit B are a stronger signal than either address alone
-    (§8). Rotating means tearing this down and building another.
+    replayed from exit B are a stronger signal than either address alone.
+Rotating means tearing this down and building another.
     """
 
     def __init__(self, pw, args, proxy_url: Optional[str]):
@@ -241,7 +241,7 @@ class _BrowserSession:
         if args.cdp_endpoint:
             # Never set a UA, a fingerprint or a proxy over a remote
             # endpoint: the remote browser brings its own, and stacking a
-            # second creates a contradiction rather than better cover (§8).
+            # second creates a contradiction rather than better cover.
             try:
                 self.browser = pw.chromium.connect_over_cdp(
                     args.cdp_endpoint, timeout=NAV_TIMEOUT_MS)
@@ -256,9 +256,9 @@ class _BrowserSession:
             # proxy_pool.to_playwright puts credentials in
             # Playwright's own fields, never in `server` — which
             # becomes a Chromium command line and is readable by
-            # anything that can run `ps` (CLAUDE.md §8). This was
+            # anything that can run `ps`. This was
             # hand-rolled here until the shared module turned out
-            # to already do it, correctly (§16).
+            # to already do it, correctly.
             proxy = proxy_pool.to_playwright(self.proxy_url)
             if proxy:
                 launch["proxy"] = proxy
@@ -296,7 +296,7 @@ class _BrowserSession:
     def rotate_to(self, proxy_url):
         """Tear this session down and build another on a different exit.
 
-        A rotation is a FRESH BROWSER, not a swapped proxy (CLAUDE.md §8):
+        A rotation is a FRESH BROWSER, not a swapped proxy:
         cookies a bot manager issued against exit A and replayed from exit B
         are a stronger signal than either address alone. So the visitor
         cookie is re-minted through the new exit too, rather than carried
@@ -311,12 +311,12 @@ class _BrowserSession:
         """Context kwargs from a 2Captcha fingerprint, or {}.
 
         Delegates BOTH steps to fingerprint_client rather than reading the
-        payload here, and that is not tidiness — it is CLAUDE.md §16 with a
+        payload here, and that is not tidiness — it is a lesson with a
         scar. The first version of this method hand-rolled the translation
         and read `fp["timezone"]` and `fp["locale"]`, neither of which
         exists: the API puts them in `fp["intl"]` as `timeZone` and
         `contentLocale`. So it silently applied NO timezone and NO locale,
-        which is two of the exact four defects §16 lists as having lived for
+        which is two of the exact defects that had lived for
         months in this family — re-introduced in new code, in a repo whose
         shared module had already fixed them.
         `playwright_context_kwargs` is the tested path; this calls it.
@@ -327,7 +327,7 @@ class _BrowserSession:
         populated.
 
         Every key is one `new_context` accepts. An unknown key is a
-        TypeError at launch, on the paid path, at runtime (§10).
+        TypeError at launch, on the paid path, at runtime.
         """
         try:
             import fingerprint_client as FP
@@ -337,7 +337,7 @@ class _BrowserSession:
                 country=self.args.fp_country)
         except Exception as exc:  # noqa: BLE001
             # A fingerprint failure is a WARNING, never the end of a run:
-            # the run's job is data, and it can still get it (§8).
+            # the run's job is data, and it can still get it.
             log.warning("[!] --fingerprint: %s — continuing with the "
                         "browser's own identity", _mask(exc))
             return {}
@@ -373,7 +373,7 @@ class _BrowserSession:
             the HTTP handshake leaves from  65.108.17.126  Helsinki, FI,
                                             AS24940 Hetzner (datacenter)
 
-        CLAUDE.md §8: cookies a bot manager issued against exit A and
+        Cookies a bot manager issued against exit A and
         replayed from exit B are a stronger signal than either address
         alone. And it threw away what the Scraping Browser is bought for —
         the cookie IS the session identity, and it was being minted on the
@@ -461,18 +461,18 @@ def handle_captcha_if_present(page, args, budget: page_flow.SolveBudget) -> bool
     offline checks, and it would have raised AttributeError at the exact
     moment a challenge first appeared. It surfaced only once a real API key
     arrived and the suite's signature-binding check was widened to cover
-    this module (CLAUDE.md §16: the credential-gated paths are the ones
+    this module (the credential-gated paths are the ones
     nobody ran).
 
     `budget` is NOT optional and is shared with the other call site in the
-    same attempt. §23: every engine in this family calls this twice per
+    same attempt. Every engine in this family calls this twice per
     attempt and only the second call was ever counted, so
     `SOLVES_PER_PAGE = 1` enforced nothing.
 
     Expected never to fire on Weibo: no challenge was rendered on any route
     this repo reads. It is here because Weibo has two captcha vendors wired
     into its own page chrome, so one appearing later is a change in the
-    site rather than an impossibility (§19).
+    site rather than an impossibility.
     """
     if args.solve_captcha == "never":
         return False
@@ -495,7 +495,7 @@ def handle_captcha_if_present(page, args, budget: page_flow.SolveBudget) -> bool
     if marker and marker not in P.CHALLENGE_MARKERS:
         # A login wall is not a challenge. Nothing is being tested, access
         # is being declined, and paying for a request the API will reject
-        # is worse than reporting the page unsolved (CLAUDE.md §19).
+        # is worse than reporting the page unsolved.
         log.info("[i] %r is a login wall, not a challenge — no solve "
                  "attempted (this repo does not implement account login)",
                  marker)
@@ -503,8 +503,8 @@ def handle_captcha_if_present(page, args, budget: page_flow.SolveBudget) -> bool
 
     import captcha_solver as CS
 
-    # BOTH detectors, then reconcile — never short-circuit on the first
-    # (CLAUDE.md §8). They can disagree about the same page, and the live
+    # BOTH detectors, then reconcile — never short-circuit on the first.
+    # They can disagree about the same page, and the live
     # one sees a widget the markup only hints at.
     static_hit = CS.detect_recaptcha_v3(html, page_url)
     runtime_hit = None
@@ -552,7 +552,7 @@ def handle_captcha_if_present(page, args, budget: page_flow.SolveBudget) -> bool
 def _snapshot(body: str, url: str, args, page_num: int, state: str) -> None:
     """Write the exact bytes this run saw, on success too.
 
-    CLAUDE.md §9: `--dump-html` writes on success as well as failure,
+    `--dump-html` writes on success as well as failure,
     because a run can return the right COUNT with a field silently
     unpopulated, and then the bytes are the only way to tell a parsing bug
     from a too-early snapshot.
@@ -580,7 +580,7 @@ def _api_get(session: _BrowserSession, url: str) -> Tuple[Optional[int], str]:
     reason in the module docstring — a navigation to these URLs is refused
     with a 403 that looks exactly like a block and is not one. It carries
     the context's cookies and proxy, and it runs no JavaScript, so it is
-    also immune to the CSP trap that killed a run in a sibling repo (§18).
+    also immune to the CSP trap that killed a run in a sibling repo.
 
     The status is RETURNED rather than discarded, and passed positionally
     into `classify`. A discarded status turns a 403 into a retryable parse
@@ -606,13 +606,16 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
     last_error: Optional[str] = None
     blocked_tries = 0
 
+    # ONE allowance for this page, created before the retry loop: a retry
+    # or an exit rotation does not hand the page a fresh one.
+    budget = page_flow.SolveBudget()
     for attempt in range(1, attempts + 1):
-        budget = page_flow.SolveBudget()
         try:
-            # First call site: clear a challenge BEFORE judging the page,
-            # so a challenge that gates the content does not get classified
-            # as the content's absence.
-            handle_captcha_if_present(session.page, args, budget)
+            if args.solve_captcha == "always":
+                # Pre-classification call site, only on request. Under
+                # `when-blocked` nothing is bought until the response has
+                # been read and classified as a challenge.
+                handle_captcha_if_present(session.page, args, budget)
             status, body = _api_get(session, url)
             state = page_flow.classify(body, status, url)
 
@@ -643,12 +646,11 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 # whether this particular state is worth another attempt;
                 # RETRY_ON_BLOCKED says whether a blocked page is worth
                 # re-fetching at all on this site. Both are consulted, so
-                # neither is prose pretending to be enforcement (§17).
+                # neither is prose pretending to be enforcement.
                 if not (page_flow.RETRY_ON_BLOCKED
                         and page_flow.should_retry(state)):
-                    log.error("[x] page %d: %s — this wants an ACCOUNT, not a "
-                              "different address or another attempt. Not "
-                              "retrying.", page_num, state)
+                    log.error("[x] page %d: %s — %s Not retrying.",
+                              page_num, state, page_flow.blocked_hint(state))
                     return PageOutcome(page_num, url, state=state, error=state)
                 budgeted = (len(pool) - 1 if pool
                             else page_flow.BLOCK_RETRIES_WITHOUT_POOL)
@@ -672,7 +674,7 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 log.warning("[!] page %d attempt %d: the exit failed (%s)",
                             page_num, attempt, which)
                 if pool and len(pool) > 1:
-                    # A rotation is a FRESH BROWSER (CLAUDE.md §8): cookies
+                    # A rotation is a FRESH BROWSER: cookies
                     # a bot manager issued against exit A and replayed from
                     # exit B are a stronger signal than either address
                     # alone, so the session is torn down and rebuilt rather
@@ -682,6 +684,14 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 last_error = f"browser: {_mask(exc)[:160]}"
                 log.warning("[!] page %d attempt %d: %s", page_num, attempt,
                             last_error)
+        except RuntimeError as exc:
+            # The visitor handshake (or the rebuilt browser after a rotation)
+            # could not reach passport. That is this page failing, and it
+            # goes through the retry budget like any transport fault; it
+            # used to escape to main() as exit 1 and lose earlier pages.
+            last_error = f"session: {_mask(exc)[:160]}"
+            log.warning("[!] page %d attempt %d: %s", page_num, attempt,
+                        last_error)
 
         if attempt < attempts:
             time.sleep(max(0.0, float(args.retry_delay)))
@@ -786,14 +796,25 @@ def _resolve_target(args) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     return P.uid_from_url(args.url), mblogid, mid
 
 
-def _resolve_mid(session: _BrowserSession, mblogid: str) -> Optional[str]:
-    """The numeric `mid` for a base-62 post id, via /statuses/show."""
-    status, body = _api_get(session, P.SHOW_URL.format(mblogid=mblogid))
-    if page_flow.classify(body, status) != "content":
-        return None
+def _resolve_mid(session: _BrowserSession, mblogid: str
+                 ) -> Tuple[Optional[str], str]:
+    """`(mid, state)` for a base-62 post id, via /statuses/show.
+
+    The state is returned with it so the caller can tell a refused
+    or failed lookup from a post that does not exist.
+    """
+    try:
+        status, body = _api_get(session, P.SHOW_URL.format(mblogid=mblogid))
+    except (PlaywrightError, PlaywrightTimeout, RuntimeError) as exc:
+        log.warning("[!] /statuses/show failed: %s", _mask(exc)[:160])
+        return None, "transport_error"
+    state = page_flow.classify(body, status)
+    if state != "content":
+        return None, state
     payload = P._payload_dict(body)
-    return (str(payload.get("mid")) if payload.get("mid")
-            else str(payload.get("idstr")) if payload.get("idstr") else None)
+    mid = (str(payload.get("mid")) if payload.get("mid")
+           else str(payload.get("idstr")) if payload.get("idstr") else None)
+    return mid, state
 
 
 def scrape(args) -> int:
@@ -801,7 +822,7 @@ def scrape(args) -> int:
     # proxy_pool.from_args, so a run that passed both flags crashed
     # on the way to this message instead of reading it — a refusal
     # that exists in the source and cannot be reached is not a
-    # refusal (CLAUDE.md §17).
+    # refusal.
     if args.cdp_endpoint and (args.proxy or args.proxy_file):
         # Exit 2, the family's code for bad usage. A bare
         # `raise SystemExit("...")` exits 1, which is "crash" — and a caller
@@ -824,7 +845,7 @@ def scrape(args) -> int:
         # Refused rather than warned, and the reason is the mode's: neither
         # feed this repo reads is addressable, so there is no page 5 to
         # hand a second worker — page 5's cursor does not exist until page
-        # 4 arrives (§7, §18). Warning and then running would produce N
+        # 4 arrives. Warning and then running would produce N
         # workers all re-fetching page 1.
         log.warning("[!] --concurrency %d refused: neither the hot feed nor a "
                     "user's cursor has independent page addresses, so a "
@@ -861,13 +882,21 @@ def scrape(args) -> int:
             author_followers = None
 
             if args.mode == "user":
-                status, body = _api_get(session, P.profile_info_url(uid))
+                try:
+                    status, body = _api_get(session, P.profile_info_url(uid))
+                except (PlaywrightError, PlaywrightTimeout, RuntimeError) as exc:
+                    # The profile only adds context columns. Its failure
+                    # must not end the run as a crash (exit 1) before the
+                    # feed itself has been asked for.
+                    log.warning("[!] profile request failed: %s",
+                                _mask(exc)[:160])
+                    status, body = None, ""
                 if page_flow.classify(body, status) == "content":
                     prof = P.parse_profile(body)
                     author_followers = prof.get("followers_count")
                     # The site's own count for this account, so a file
-                    # holding 5 rows against 21,947 posts says so (§21:
-                    # "complete" and "exhaustive" are different words).
+                    # holding 5 rows against 21,947 posts says so: "complete" and
+                    # "exhaustive" are different words.
                     extra["statuses_claimed"] = prof.get("statuses_count")
                     extra["account"] = prof.get("screen_name")
                     extra["followers_count"] = author_followers
@@ -876,18 +905,28 @@ def scrape(args) -> int:
                                 "follower counts will be null on every row",
                                 uid)
 
+            unresolved = False
             if args.mode == "post" and not mid and mblogid:
-                mid = _resolve_mid(session, mblogid)
+                mid, show_state = _resolve_mid(session, mblogid)
                 if not mid:
+                    # Decided by what /statuses/show answered, through
+                    # finish_run: a wall is blocked (3), "no such post" is
+                    # a real empty answer (4), anything else means the
+                    # post was never reached (5). A bare exit 4 here used
+                    # to claim "no comments" for a lookup that failed.
+                    unresolved = True
+                    blocked, stop_reason = page_flow.unresolved_post_outcome(
+                        show_state)
+                    start_url = final_url = P.SHOW_URL.format(mblogid=mblogid)
                     log.error("[x] could not resolve %s to a numeric mid, "
-                              "which is the id the comments endpoint takes",
-                              mblogid)
-                    return EXIT_NO_PRODUCTS
+                              "which is the id the comments endpoint takes "
+                              "(/statuses/show answered %s)", mblogid,
+                              show_state)
 
             cursor: Any = 0
-            for page_num in range(1, pages + 1):
+            for page_num in range(1, (0 if unresolved else pages) + 1):
                 if args.mode == "hot":
-                    url = P.hot_feed_url(count=25)
+                    url = P.hot_feed_url(count=25, group=args.category)
                 elif args.mode == "user":
                     url = P.user_feed_url(uid, cursor)
                 else:
@@ -910,11 +949,23 @@ def scrape(args) -> int:
                     stop_reason = f"error_on_page_{page_num}"
                     break
 
+                if page_flow.served_rows_we_could_not_read(outcome.state,
+                                                           outcome.rows):
+                    # The site served rows and the parser read none: the
+                    # response shape changed. Not an empty feed (exit 4),
+                    # and not a complete run either.
+                    pages_failed.append(page_num)
+                    stop_reason = page_flow.PARSER_FAILURE_REASON
+                    log.error("[x] page %d was served with rows in it and the "
+                              "parser read none of them — %s", page_num,
+                              stop_reason)
+                    break
+
                 fresh = dedupe_by_key(outcome.rows, seen, key=dedupe_key)
                 # Merged in PAGE order, because the loop is sequential and
                 # stays that way: dedupe that mutates a running set inside a
                 # concurrent loop makes the output depend on which page
-                # finished first (§8).
+                # finished first.
                 rows.extend(fresh)
                 pages_completed += 1
                 # "page" is wrong for a feed that has none: the hot feed
@@ -1005,16 +1056,16 @@ def parse_args(argv=None):
                         "which is what weibo.com's own front page requests "
                         "and the ONLY value verified — others exist and were "
                         "not tested.")
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=env_config.positive_int, default=1,
                    help=f"How many fetches to make (max {P.MAX_PAGES}). The "
                         "hot feed has no page 2: N there means N fetches of a "
                         "feed that re-rolls.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="json")
     p.add_argument("--out", default="weibo_posts")
-    p.add_argument("--delay", type=float, default=1.0)
-    p.add_argument("--retries", type=int, default=2)
-    p.add_argument("--retry-delay", type=float, default=3.0)
-    p.add_argument("--concurrency", type=int, default=1,
+    p.add_argument("--delay", type=env_config.non_negative_float, default=1.0)
+    p.add_argument("--retries", type=env_config.non_negative_int, default=2)
+    p.add_argument("--retry-delay", type=env_config.non_negative_float, default=3.0)
+    p.add_argument("--concurrency", type=env_config.positive_int, default=1,
                    help="Refused above 1: neither feed has independent page "
                         "addresses, so a worker cannot be handed a page.")
 
@@ -1025,7 +1076,7 @@ def parse_args(argv=None):
     # "on-block" as the default — and proxy_pool.ROTATE_MODES has only
     # ("per-run", "per-page"), so every run that passed a proxy died on
     # `ProxyError: rotate must be one of ...` before fetching anything.
-    # CLAUDE.md §17: when a shared module documents a constraint, grep the
+    # When a shared module documents a constraint, grep the
     # callers for values that violate it. Reading the constant instead
     # makes that impossible to get wrong again.
     p.add_argument("--proxy-rotate", choices=list(proxy_pool.ROTATE_MODES),
@@ -1034,7 +1085,7 @@ def parse_args(argv=None):
                         "FAILURE happens under either mode — the engine "
                         "calls advance() when an exit dies.")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int,
+    p.add_argument("--proxy-block-retries", type=env_config.non_negative_int,
                    default=page_flow.BLOCK_RETRIES_WITHOUT_POOL)
 
     p.add_argument("--twocaptcha-key", default=None)
@@ -1079,6 +1130,15 @@ def parse_args(argv=None):
         p.error("--pages must be at least 1")
     if args.pages > P.MAX_PAGES:
         p.error(f"--pages above {P.MAX_PAGES} is refused")
+    if args.concurrency > 1:
+        # Refused, not warned and then run with 1: neither feed this repo
+        # reads has independent page addresses (page N's cursor does not
+        # exist until page N-1 arrives), so a worker cannot be handed a page.
+        p.error("--concurrency above 1 is refused: neither the hot feed nor "
+                "a cursor has independent page addresses")
+    if not str(args.category or "").isdigit():
+        p.error(f"--category must be a numeric feed group id, got "
+                f"{args.category!r}")
     return args
 
 

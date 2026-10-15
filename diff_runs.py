@@ -86,7 +86,7 @@ TRACKED_FIELDS = (
 # `text_raw`; `/ajax/statuses/longtext` returns the rest. When the two rows
 # disagree on `text_source`, a body difference is an artefact of one run
 # recovering the text and the other not, so it is reported as
-# `source_changed` rather than as a change — this family's rule (§8: a
+# `source_changed` rather than as a change — this family's rule (a
 # difference that comes with a provenance difference says something about
 # our own two snapshots, not about the site).
 TEXT_SOURCE_FIELDS = ("title", "text_truncated")
@@ -231,15 +231,15 @@ def _check_comparable(args) -> bool:
             modes[label] = mode
         if mode and mode not in UNIQUE_BY_SKU_MODES:
             # This tool's whole premise is one row per `sku`, diffed on
-            # price. A mode that produces many rows per sku would give a diff
+            # its tracked fields. A mode that produces many rows per sku would give a diff
             # whose every line is an artefact of two rows sharing an id, so
             # it is refused outright rather than answered. Both of this
             # repo's current modes qualify; the check is here so that adding
             # one that does not is caught rather than discovered.
             problems.append(
                 f"{label} ({path}) is a {mode!r} run, which is not one row "
-                f"per sku. This tool diffs one row per sku on price, so there "
-                f"is nothing here it can compare.")
+                f"per sku. This tool diffs one row per sku on its tracked "
+                f"fields, so there is nothing here it can compare.")
         if status != "complete":
             problems.append(
                 f"{label} ({path}) was a {status!r} run — stopped after "

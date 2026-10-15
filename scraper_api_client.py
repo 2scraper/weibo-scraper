@@ -348,14 +348,16 @@ def parse_args():
                    help="A weibo.com account or post URL. Not needed for "
                         "--mode hot. Falls back to $WEIBO_URL or .env.")
     p.add_argument("--mode", choices=["hot", "user", "post"],
-                   default="profile",
-                   help="Default profile, unlike the browser engines, "
-                        "because a profile is the only page kind this path "
-                        "reads that the free endpoint cannot.")
-    p.add_argument("--category", default=None, help="Label to tag output rows with. Defaults to the category segment of the URL, so the column is never empty just because the flag was omitted.")
+                   default="hot",
+                   help="Which parser reads the returned payload. Default "
+                        "hot, as in the other CLIs.")
+    p.add_argument("--category", default=None,
+                   help="Accepted for the family's shared flag set and not "
+                        "used by this client: the --url decides what is "
+                        "fetched.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="weibo_posts_scraperapi", help="Output file prefix")
-    p.add_argument("--timeout", type=int, default=60,
+    p.add_argument("--timeout", type=env_config.positive_int, default=60,
                    help=f"API-side task timeout in seconds (1-{MAX_API_TIMEOUT}, default 60)")
     p.add_argument("--cdp-url", default=None,
                    help="Route the fetch through an existing browser session over CDP "
@@ -372,11 +374,11 @@ def parse_args():
     p.add_argument("--allow-empty", action="store_true",
                    help="Write output files even when 0 products were parsed. Off by "
                         "default so a failed fetch can't overwrite a good result.")
-    p.add_argument("--retries", type=int, default=1,
+    p.add_argument("--retries", type=env_config.non_negative_int, default=1,
                    help="Extra attempts if a bot-challenge page comes back. One retry is "
                         "usually worth it. Each attempt is a separate billable task, so "
                         "this defaults to 1.")
-    p.add_argument("--retry-delay", type=int, default=10,
+    p.add_argument("--retry-delay", type=env_config.non_negative_int, default=10,
                    help="Seconds between retries (default 10)")
     p.add_argument("--dump-html", default=None,
                    help="Also write the raw returned HTML to this path (always, even on success)")
