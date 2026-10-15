@@ -372,7 +372,20 @@ as any file your shell creates); a file that already exists keeps its
 mode.
 
 **A run that finds nothing writes nothing** — last night's good output is
-not replaced with an empty file. `--allow-empty` opts out.
+not replaced with an empty file.
+
+**`--allow-empty` is for a genuine empty result only.** With it, a run
+that finished and found nothing writes an empty JSON (`[]`), a CSV holding
+only its header, and a sidecar with `status: empty` and its `stop_reason`,
+and still exits `4`. It never turns a blocked or failed run into an empty
+one. A blocked run still exits `3`. A run whose content was never obtained,
+or whose parser read nothing from a page that stated rows, still exits `5`.
+A run that saved rows and then stopped early still exits `6`. For the
+zero-row failures no empty row file is written, and an earlier output at
+the same `--out` is left untouched, sidecar included. Only when nothing
+earlier exists there does a blocked or failed `--allow-empty` run write a
+sidecar on its own, with `status: blocked` or `failed`. `diff_runs.py`
+compares an `empty` run like a complete one.
 
 ---
 
