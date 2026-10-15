@@ -10,6 +10,8 @@ notes lead with it.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-10-15
+
 > **Behaviour changes in this section.**
 > - Output files are created with the mode your umask gives (`0644` under
 >   the usual `022`) instead of `0600`, and an existing file keeps its mode.
@@ -29,7 +31,10 @@ notes lead with it.
 >   `scraper_api_client.py` negative `--retries`/`--retry-delay` and a
 >   `--timeout` below 1.
 
+First release. Three modes, three engines, all run live against weibo.com.
+
 ### Added
+
 - **A browserless CLI: `python weibo_api.py --mode hot --pages 3`.** The
   README's central claim is that none of the paid products is needed for
   these three modes, and until now no COMMAND stood behind it —
@@ -43,8 +48,19 @@ notes lead with it.
   flags and deliberately omits `--cdp-endpoint`, `--fingerprint`,
   `--fp-*` and `--headless`: those describe a browser, and there is none
   here.
+- `--mode hot` — the public hot feed (`/ajax/feed/hottimeline`).
+- `--mode user` — one account's posts, walked by cursor
+  (`/ajax/profile/getWaterFallContent`).
+- `--mode post` — one post's comments (`/ajax/statuses/buildComments`).
+- `weibo_api.py` — the anonymous-visitor handshake against
+  `passport.weibo.com`, shared by all three engines and usable on its own as
+  a browserless reader.
+- Long-text recovery: `/ajax/statuses/longtext` is fetched for every post
+  the site flags as truncated, with provenance in `text_source`.
+- 36-column row schema, JSON + CSV, with a `<out>.meta.json` sidecar per run.
 
 ### Fixed
+
 - **One paid solve per page, across all its retries.** The solve allowance
   was created per attempt, so a page could buy a solve on every attempt.
   It is now created once per page in all three engines. Under the default
@@ -82,7 +98,6 @@ notes lead with it.
 - Comments and help text that cited private working notes now state the
   rule itself; a suite check keeps such citations out. Leftover wording
   about prices and product pages was removed.
-
 - **Every file is now written atomically**, to a temporary file beside the
   target and then renamed over it, with an `fsync` first. `open(path,
   "w")` truncates BEFORE writing, so a crash, a kill or a full disk
@@ -115,7 +130,6 @@ notes lead with it.
   family contract across ~30 repos and this repo's own suite asserts the
   three engines declare exactly that set, so renaming it here would break
   the one thing that makes the family comparable.
-
 - **The Scraper API engine failed on every `--wait-text` / `--wait-element` /
   `--wait-state` call, and was billed for it.** It sent `waitFor` as a
   JSON-encoded string; measured 2026-09-23 the live API answers that with
@@ -152,31 +166,14 @@ notes lead with it.
   `/out/restaurants`; `SECURITY.md` mentioned Cloudflare.
 - README: the release badge is removed, since no release has been published
   on GitHub yet.
-
 - `captcha_solver.py`'s docstring pointed at a "No DataDome solver" section
   that does not exist in this repo (it came with the copied core). Removed.
 
 ### CI
+
 - The canary also runs `--mode post` on the most-commented post from the
   user run, and the browserless `weibo_api.py`, each with row floors and
   non-null core fields. `weibo_api.py` is in the `--help` checks.
-
-## [0.1.0] — 2026-09-21
-
-First release. Three modes, three engines, all run live against weibo.com.
-
-### Added
-
-- `--mode hot` — the public hot feed (`/ajax/feed/hottimeline`).
-- `--mode user` — one account's posts, walked by cursor
-  (`/ajax/profile/getWaterFallContent`).
-- `--mode post` — one post's comments (`/ajax/statuses/buildComments`).
-- `weibo_api.py` — the anonymous-visitor handshake against
-  `passport.weibo.com`, shared by all three engines and usable on its own as
-  a browserless reader.
-- Long-text recovery: `/ajax/statuses/longtext` is fetched for every post
-  the site flags as truncated, with provenance in `text_source`.
-- 36-column row schema, JSON + CSV, with a `<out>.meta.json` sidecar per run.
 
 ### Measured, on 2026-09-21, from a datacenter address in Finland
 
