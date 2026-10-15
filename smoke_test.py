@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 smoke_test.py — the offline suite. One file, plain functions, inline
-fixtures. No pytest, no conftest, no fixtures directory (CLAUDE.md §10).
+fixtures. No pytest, no conftest, no fixtures directory.
 
     python3 smoke_test.py
 
@@ -18,7 +18,7 @@ placeholder: author names are `示例用户N` ("Example User N"), bodies are
 `示例正文内容` ("example body text") repeated to the original's length band,
 ids are renumbered and image URLs point at example.com.
 
-That scrubbing is deliberate and CLAUDE.md §10 is why: republishing a
+That scrubbing is deliberate: republishing a
 private individual's name and words is a separate act from the site
 showing them on its own page, and these checks need the STRUCTURE of a
 post, not the person. The guards below match PATTERNS rather than the old
@@ -587,7 +587,7 @@ BAD_REQUEST = FIXTURES["bad_request"]
 # this job: the two most obvious captcha markers on this site appear in
 # MARKUP, not in any payload, so a marker check that only ever sees JSON
 # would pass while carrying a marker that fires on every good page.
-# CLAUDE.md §21: a guard is only as good as the fixture it runs against.
+# A guard is only as good as the fixture it runs against.
 #
 # What it preserves, counted on the real page 2026-09-21:
 #     var CAPTCHA_TYPE = 'yidun'            NetEase Yidun, preloaded
@@ -616,13 +616,13 @@ SERVED_HTML = "<!doctype html>\n<html lang=\"zh-cn\">\n  <head>\n    <meta chars
 #
 # The page was 2,566 bytes and Weibo served it perfectly normally. The
 # extra occurrences are 2Captcha's own auto-solve extension injecting its
-# hunters into every page it loads (CLAUDE.md §8, §19).
+# hunters into every page it loads.
 #
 # This is why the marker set here excludes the obvious words. Carrying
 # `cf-turnstile`, `turnstile`, `captcha` or `geetest` would make EVERY page
 # fetched through the paid browser read as a challenge — and the earlier
 # counts in this file were all taken from direct fetches, which is exactly
-# the gap §21 names: a guard is only as good as the fixture it runs
+# a known gap: a guard is only as good as the fixture it runs
 # against, and the fixture that matters is the one fetched the way a real
 # run fetches.
 EXTENSION_INJECTED_PAGE = (
@@ -651,8 +651,8 @@ ENGINES = ("playwright_scraper", "puppeteer_scraper", "selenium_scraper")
 # only as wide as this list: the engine called a function named
 # `fetch_fingerprint` that fingerprint_client has never defined (it is
 # `get_fingerprint`), and nothing caught it until a real key arrived and the
-# paid path ran for the first time. That is CLAUDE.md §16 — the credential
-# -gated paths are the ones nobody ran — and §22: when a check resolves
+# paid path ran for the first time. The credential-gated paths are the
+# ones nobody ran — and when a check resolves
 # something before testing it, ask what it does when the resolution never
 # happens at all.
 SHARED_MODULES = ("page_flow", "product_parser", "weibo_api", "output_writer",
@@ -663,7 +663,7 @@ SHARED_MODULES = ("page_flow", "product_parser", "weibo_api", "output_writer",
 # ---------------------------------------------------------------------------
 # 1. The parser, asserted on VALUES rather than on coverage
 # ---------------------------------------------------------------------------
-# CLAUDE.md §10: a column can be 100% populated and entirely wrong. A sibling
+# A column can be 100% populated and entirely wrong. A sibling
 # repo shipped a review count read by stripping every digit out of an
 # aria-label — 445279961 on every row, while the coverage check said 100%.
 
@@ -682,7 +682,7 @@ def test_parse_hot_feed():
     eq(r.position, 1, "hot: position is 1-based")
     eq(r.source, "weibo.com", "hot: source")
 
-    # page + position must be unique across the run. CLAUDE.md §18: a run
+    # page + position must be unique across the run. A run
     # once wrote page=1 on every row, so 60 of 119 rows claimed a position
     # another row already held, and the column was worthless.
     pairs = [(x.page, x.position) for x in rows]
@@ -809,7 +809,7 @@ def test_truncation_semantics():
     eq(row.text_truncated, True, "could not ask: stays truncated")
 
     # Never shorten a row: two views disagreeing means leave the good one
-    # alone (CLAUDE.md §4).
+    # alone.
     row = Post(sku="d", title="a much longer inline body", text_source="x")
     P.apply_longtext(row, "tiny", reached=True)
     eq(row.title, "a much longer inline body",
@@ -817,11 +817,11 @@ def test_truncation_semantics():
 
 
 def test_zero_width_is_not_a_truncation_signal():
-    """Pinned as a KNOWN NON-SIGNAL, with the measurement (CLAUDE.md §10).
+    """Pinned as a KNOWN NON-SIGNAL, with the measurement.
 
     Counted 2026-09-21 over 40 posts from four live hot-feed fetches: every
     single one ends in a zero-width space, flagged long or not. A marker
-    that matches every page is worse than no marker (§18), so nothing
+    that matches every page is worse than no marker, so nothing
     branches on it — `isLongText` does, and the endpoint settles it.
     """
     import product_parser as P
@@ -902,7 +902,7 @@ def test_url_readers():
 
 
 def test_host_refusals_name_the_reason():
-    """A bare False sends the reader hunting for a typo (CLAUDE.md §5)."""
+    """A bare False sends the reader hunting for a typo."""
     import product_parser as P
     ok, why = P.is_supported_host("https://weibo.com/u/1")
     check(ok, "weibo.com is supported")
@@ -918,7 +918,7 @@ def test_host_refusals_name_the_reason():
     check("account" in why.lower(), "search is refused for wanting an account")
     check("does not implement" in why,
           "and says THIS REPO does not implement it — a TODO, not a claim "
-          "about what is possible (CLAUDE.md §19)")
+          "about what is possible")
 
 
 # ---------------------------------------------------------------------------
@@ -964,7 +964,7 @@ def test_the_visitor_gate_asks_for_a_cookie_not_for_an_account():
     had lost its cookie would have retried blindly instead of minting one.
 
     `detect_bot_challenge` had the right spellings the whole time, so the
-    two detectors disagreed about the same page — CLAUDE.md §19.
+    two detectors disagreed about the same page.
     """
     import page_flow as F
     import product_parser as P
@@ -979,7 +979,7 @@ def test_the_visitor_gate_asks_for_a_cookie_not_for_an_account():
             # because the host lives in the URL and not in the body. A
             # fixture that carried it would match the very spelling this
             # check exists to prove is absent — and did, silently, until
-            # the control was run (CLAUDE.md §21).
+            # the control was run.
             'var url = "/visitor/visitor";'
             'function getTid(){ return tid; }'
             'location.href = "https://weibo.com/login.php";'
@@ -1002,7 +1002,7 @@ def test_the_visitor_gate_asks_for_a_cookie_not_for_an_account():
 
 
 def test_chromium_error_page_is_not_a_block():
-    """CLAUDE.md §18's inverted-detection case.
+    """The inverted-detection case.
 
     Chromium's built-in network-error page carries the requested HOSTNAME in
     its own `<title>`, so a title check calls a page that never left the
@@ -1035,7 +1035,7 @@ def test_state_policy_is_coherent():
           "login_wall does not spend the user's retry budget")
     check(not F.should_solve("login_wall"),
           "login_wall buys no solve — nothing is being tested, access is "
-          "being declined (CLAUDE.md §19)")
+          "being declined")
     check(F.counts_as_blocked("login_wall"), "login_wall is blocked")
 
     # needs_visitor is the opposite: cheap to fix, so retry and do NOT
@@ -1051,7 +1051,7 @@ def test_state_policy_is_coherent():
 
 
 def test_solve_budget_is_actually_enforced():
-    """CLAUDE.md §23: this constant enforced NOTHING across the family.
+    """This constant enforced NOTHING across the family.
 
     Every engine calls the captcha handler TWICE per attempt — once before
     the response is classified, once after — and only the second call was
@@ -1082,7 +1082,7 @@ def test_solve_budget_is_actually_enforced():
             ) or any(k.arg == "budget" for k in c.keywords)
             check(passes_budget,
                   f"{name}: every captcha call site is handed the shared "
-                  "budget — the §23 defect is one call site that is not")
+                  "budget — the defect is one call site that is not")
         eq(src.count("budget.charge()"), 1,
            f"{name}: exactly one place charges the budget")
         eq(src.count("budget.may_solve()"), 1,
@@ -1092,7 +1092,7 @@ def test_solve_budget_is_actually_enforced():
 def test_policy_constants_have_consumers():
     """A policy constant nothing reads is the same defect as dead code.
 
-    CLAUDE.md §17: `RETRY_ON_BLOCKED` carried a paragraph of measured
+    `RETRY_ON_BLOCKED` carried a paragraph of measured
     justification in a sibling repo and NO engine consulted it, so setting
     it False changed nothing while the prose read like enforcement.
     """
@@ -1109,7 +1109,7 @@ def test_policy_constants_have_consumers():
         # reason: a constant the engines mention but page_flow no longer
         # defines is an AttributeError on the first blocked page, and a
         # constant page_flow defines but nothing reads is prose pretending
-        # to be enforcement (CLAUDE.md §17).
+        # to be enforcement.
         check(hasattr(page_flow, name),
               f"page_flow defines {name} — the engines read it by that name")
         consumers = [f for f, s in sources.items()
@@ -1122,7 +1122,7 @@ def test_policy_constants_have_consumers():
 # ---------------------------------------------------------------------------
 
 def test_no_marker_fires_on_a_good_payload():
-    """CLAUDE.md §18: count every marker on a page you KNOW is good.
+    """Count every marker on a page you KNOW is good.
 
     This is the check that matters most on this site, because the obvious
     markers are inverted here. Counted 2026-09-21 over 6 served responses
@@ -1167,8 +1167,8 @@ def test_both_captcha_vendors_are_preloaded_on_a_good_page():
     times, `geetest` once, `yidun` once — on a page that answered HTTP 200
     with the account on it and nothing being challenged.
 
-    So on this site not even a vendor's LOADER is a marker, which is §18 at
-    full strength: `static.geetest.com/v4/gt4.js` is what a good page
+    So on this site not even a vendor's LOADER is a marker, which is the
+    inverted-marker lesson at full strength: `static.geetest.com/v4/gt4.js` is what a good page
     fetches. Anything that keys on the vendor's name or its script URL will
     call every page a challenge.
     """
@@ -1181,7 +1181,7 @@ def test_both_captcha_vendors_are_preloaded_on_a_good_page():
 
 
 def test_no_marker_fires_on_a_scraping_browser_page():
-    """The fixture §21 says actually matters.
+    """The fixture that actually matters.
 
     2Captcha's Scraping Browser ships an auto-solve extension that injects
     its own hunters into every page it loads, so a page Weibo served
@@ -1205,7 +1205,7 @@ def test_no_marker_fires_on_a_scraping_browser_page():
        "injects — otherwise every page fetched over --cdp-endpoint reads "
        "as a challenge")
 
-    # And the corollary CLAUDE.md §8 draws: with no marker matching an
+    # And the corollary: with no marker matching an
     # injection, the extension-tag STRIP that older repos carry would be
     # dead code here. Pinned so nobody adds it back as a precaution.
     for name in ENGINES:
@@ -1216,7 +1216,7 @@ def test_no_marker_fires_on_a_scraping_browser_page():
 
 
 def test_the_inverted_markers_stay_out():
-    """Pinned so an editor cannot reintroduce them (CLAUDE.md §10).
+    """Pinned so an editor cannot reintroduce them.
 
     `captcha` and `geetest` are measured USELESS here, and worse than
     useless: they fire on served pages and on no refusal. Every Cloudflare
@@ -1242,7 +1242,7 @@ def test_the_inverted_markers_stay_out():
 
 
 def test_markers_survive_entity_escaping():
-    """CLAUDE.md §20: a marker must survive BOTH encodings of one page.
+    """A marker must survive BOTH encodings of one page.
 
     An edge can entity-escape the punctuation in a marker so that a literal
     matches a browser's DOM and silently misses the same page fetched by an
@@ -1281,7 +1281,7 @@ def _parser_flags(path):
     return out
 
 
-# The family contract (CLAUDE.md §9), plus the five flags that list omitted
+# The family contract, plus the five flags that list omitted
 # for months while nearly every repo shipped them.
 CONTRACT_FLAGS = {
     "--url", "--pages", "--category", "--format", "--out", "--delay",
@@ -1295,7 +1295,7 @@ CONTRACT_FLAGS = {
 
 
 def test_flag_parity():
-    """Assert in BOTH directions (CLAUDE.md §20).
+    """Assert in BOTH directions.
 
     A new unshared flag fails, and so does closing a documented difference —
     because the exception list IS the documentation. This check was skipped
@@ -1324,7 +1324,7 @@ def test_flag_parity():
 def test_flag_choices_satisfy_the_shared_modules():
     """Every value a flag OFFERS must be one the callee accepts.
 
-    CLAUDE.md §17 states the rule — "when a shared module documents a
+    The rule — "when a shared module documents a
     constraint, grep the callers for values that violate it" — and this
     repo broke it twice before the check existed:
 
@@ -1334,7 +1334,7 @@ def test_flag_choices_satisfy_the_shared_modules():
         `ProxyError` before fetching anything. Unreachable without a proxy,
         so 5,600 offline checks and three live runs never touched it.
       * `--fp-tags` is the same shape of defect one module over, and the
-        family already paid for it once (§17).
+        family already paid for it once.
 
     The engines now read the constant instead of restating it, which is
     what this asserts.
@@ -1376,7 +1376,7 @@ def test_flag_choices_satisfy_the_shared_modules():
 
 
 def test_removed_flags_stay_removed():
-    """Scoped to the ENGINES (CLAUDE.md §10).
+    """Scoped to the ENGINES.
 
     `--country` is banned on a scraper because it could disagree with the
     URL, and legitimate on fingerprint_client.py where it picks a
@@ -1416,11 +1416,11 @@ def test_site_constants_agree_across_engines():
     eq(base.get("NEXT_PAGE_SELECTOR"), None,
        "there is NO next-page selector: neither feed publishes one, and "
        "inventing one is how a run reports complete while holding page 1 "
-       "(CLAUDE.md §7)")
+       "")
 
 
 # ---------------------------------------------------------------------------
-# 7. Structural checks — the five worth stealing (CLAUDE.md §17)
+# 7. Structural checks — the five worth stealing
 # ---------------------------------------------------------------------------
 
 def _bound_names(tree):
@@ -1429,8 +1429,7 @@ def _bound_names(tree):
     Needed because a name bound in the calling file SHADOWS a same-named
     module: an engine takes `pool` as a parameter, so `pool.next()` is a
     method call and not a module attribute. Without this rule the binding
-    check below reported twenty-one false positives on a clean repo
-    (CLAUDE.md §22).
+    check below reported twenty-one false positives on a clean repo.
     """
     out = set()
     for n in ast.walk(tree):
@@ -1444,7 +1443,7 @@ def _bound_names(tree):
 
 
 def test_shared_calls_bind_against_real_signatures():
-    """CLAUDE.md §17's check #1 — the one that earns its keep.
+    """The signature-binding check — the one that earns its keep.
 
     A sibling repo had two of three engines calling `classify(html, url=…)`,
     putting the URL where the status belongs, and BOTH crashed on their
@@ -1452,8 +1451,8 @@ def test_shared_calls_bind_against_real_signatures():
     and 400+ green assertions all passed. None of those calls a function the
     way a live run does.
 
-    Note what this does when it cannot RESOLVE a name: it FAILS. CLAUDE.md
-    §22 records a version that resolved with `getattr(owner, attr, None)`
+    Note what this does when it cannot RESOLVE a name: it FAILS. A sibling
+    had a version that resolved with `getattr(owner, attr, None)`
     and skipped anything not callable — so a name the shared module does
     not define at all returned None, was not callable, and was silently
     skipped. The loudest thing the check could have said was the one case
@@ -1493,7 +1492,7 @@ def test_shared_calls_bind_against_real_signatures():
                     # classmethod, `next` and `mark_failed` have never
                     # existed. Every one of them crashed on the first line
                     # that reached it, and none was reachable until a proxy
-                    # or a CDP endpoint was passed — CLAUDE.md §16 again.
+                    # or a CDP endpoint was passed — credential-gated paths again.
                     mod_name, attr_name = direct[owner]
                     if mod_name.split(".")[0] not in SHARED_MODULES:
                         continue
@@ -1553,7 +1552,7 @@ def test_shared_calls_bind_against_real_signatures():
                 check(False, f"{name}:{n.lineno} {mod_name}.{attr}(...) does "
                              f"not match the real signature: {exc}")
 
-    # A binding check that binds nothing passes for the wrong reason (§22).
+    # A binding check that binds nothing passes for the wrong reason.
     check(bound_total > 30,
           f"the binding check actually scanned something ({bound_total} calls)")
 
@@ -1565,7 +1564,7 @@ def test_annotated_parameters_are_called_correctly():
     that check cannot see this case by design: `pool` is a local name, and
     the rule that a name bound in the calling file shadows a same-named
     module is what keeps the binding check from reporting twenty-one false
-    positives (CLAUDE.md §22). So `pool.next()` and `pool.mark_failed(...)`
+    positives. So `pool.next()` and `pool.mark_failed(...)`
     sailed through it — two calls that ProxyPool has never defined, both
     unreachable until a proxy or a CDP endpoint was passed, and both
     crashing the run when it finally was.
@@ -1642,7 +1641,7 @@ def test_no_undefined_names():
     A sibling repo's engine died with `NameError` on a line reached only
     while fetching, after an import had been removed. The module imported
     cleanly, --help worked, compileall passed, the whole offline suite
-    passed and CI was green (CLAUDE.md §10).
+    passed and CI was green.
 
     Deliberately COARSE — it pools every binding in a file rather than
     tracking scopes — so it under-reports rather than inventing problems.
@@ -1679,7 +1678,7 @@ def test_no_undefined_names():
 def test_no_unreachable_code():
     """A statement after return/raise/break/continue in the same block.
 
-    CLAUDE.md §22: this found the SAME fifteen lines in six repos, byte for
+    This found the SAME fifteen lines in six repos, byte for
     byte, present since each one's first commit — a function whose `def`
     line had been lost, leaving its docstring and body absorbed into the end
     of the function above it. It parses, it imports, --help works,
@@ -1712,7 +1711,7 @@ def test_no_unreachable_code():
 
 
 def test_engines_import_their_driver_at_module_level():
-    """CLAUDE.md §10, and it drifts back silently.
+    """Driver imports at module level, and it drifts back silently.
 
     A sibling repo's pyppeteer engine imported `launch`/`connect` inside the
     launch path, so the module imported cleanly with no pyppeteer installed:
@@ -1740,7 +1739,7 @@ def test_engines_import_their_driver_at_module_level():
 def test_dockerfile_copies_what_the_entrypoint_imports():
     """CI never builds the image, which is how three repos shipped a broken
     one — `ModuleNotFoundError` on every invocation, --help included,
-    because one module was missing from the COPY list (CLAUDE.md §10).
+    because one module was missing from the COPY list.
     This check needs no Docker.
     """
     path = os.path.join(HERE, "Dockerfile")
@@ -1795,7 +1794,7 @@ def test_dockerfile_copies_what_the_entrypoint_imports():
 def test_banned_wording():
     """Assembled from pieces, so this file can scan ITSELF.
 
-    CLAUDE.md §22: three repos' versions of this check exempted
+    Three repos' versions of this check exempted
     `smoke_test.py` wholesale — the file most likely to acquire a stray
     phrase, or a pasted credential, was the one file nobody scanned.
     Building the needles at runtime removes the need for an exemption.
@@ -1821,12 +1820,12 @@ def test_banned_wording():
             for needle in banned:
                 check(needle not in text,
                       f"{os.path.relpath(p, HERE)} contains a banned phrase "
-                      "(CLAUDE.md §12) — say 'Scraping Browser API'")
+                      " — say 'Scraping Browser API'")
     check(scanned > 10, f"the wording scan read something ({scanned} files)")
 
 
 def test_fixtures_are_scrubbed():
-    """Guard with PATTERNS, not the old literals (CLAUDE.md §10).
+    """Guard with PATTERNS, not the old literals.
 
     Matching the specific names that were scrubbed would pass forever while
     the NEXT capture pasted in unscrubbed sails through. These match the
@@ -1857,7 +1856,7 @@ def test_fixtures_are_scrubbed():
 def test_the_workflow_does_not_import_repo_classes_inline():
     """A workflow that reimplements a shipped check will drift from it.
 
-    CLAUDE.md §17: one implementation, invoked from both CI and the offline
+    One implementation, invoked from both CI and the offline
     suite. This repo shipped with `tests.yml` carrying an inline copy of
     the sample-output check that did `from output_writer import Business` —
     the DONOR repo's row class. Renaming the class fixed `ci_checks.py` and
@@ -1872,7 +1871,7 @@ def test_the_workflow_does_not_import_repo_classes_inline():
     path = os.path.join(HERE, ".github", "workflows", "tests.yml")
     if not os.path.isdir(os.path.join(HERE, ".github")):
         # Triggered by the whole directory being absent, never by one file
-        # inside it going missing (§22).
+        # inside it going missing.
         return skip("workflow", "no .github directory (the Docker image)")
     if not os.path.exists(path):
         return check(False, "tests.yml is missing")
@@ -1892,7 +1891,7 @@ def test_the_workflow_does_not_import_repo_classes_inline():
 def test_capture_directories_cannot_reach_a_commit():
     """Both halves of the .gitignore rule, run through git itself.
 
-    CLAUDE.md §24: a sibling staged a 1.5 MB raw page dump on its first
+    A sibling staged a 1.5 MB raw page dump on its first
     commit through `live/`, because every pattern in the list was a NAME
     somebody had chosen rather than a KIND of directory. Measured in this
     repo on 2026-09-21 before the fix: live/, out/, output/, runs/,
@@ -1931,7 +1930,7 @@ def test_capture_directories_cannot_reach_a_commit():
                   f"a page dump in {name}/ is NOT ignored — one `git add -A` "
                   "from a commit")
         finally:
-            # A test must not mutate the working tree (CLAUDE.md §10).
+            # A test must not mutate the working tree.
             if os.path.exists(probe):
                 os.remove(probe)
             if made and os.path.isdir(d) and not os.listdir(d):
@@ -1970,7 +1969,7 @@ def test_capture_directories_cannot_reach_a_commit():
 
 
 def test_a_credential_shaped_value_is_caught_through_any_escaping():
-    """CLAUDE.md §24's other family-core hole, pinned here.
+    """The other family-core hole, pinned here.
 
     Fixtures in this family are stored as JSON STRINGS, so every quote
     inside them arrives escaped: the file holds a backslash before each
@@ -1987,7 +1986,7 @@ def test_a_credential_shaped_value_is_caught_through_any_escaping():
     if not os.path.isdir(os.path.join(HERE, ".github")):
         # Triggered by the whole directory being absent, never by one file
         # inside it going missing — a check that quietly starts passing
-        # once its input disappears is the §22 failure mode.
+        # once its input disappears is a known failure mode.
         return skip("ci_checks", "no .github directory (the Docker image)")
     spec = importlib.util.spec_from_file_location("ci_checks_probe", path)
     mod = importlib.util.module_from_spec(spec)
@@ -1998,7 +1997,7 @@ def test_a_credential_shaped_value_is_caught_through_any_escaping():
     # own scrub guard and by ci_checks.py, so a 32-hex literal here IS a
     # 32-hex literal in the repository — a check that demonstrates a
     # credential shape is a use of that shape, the same trap as quoting a
-    # banned phrase in the note that fixes it (CLAUDE.md §22). Both new
+    # banned phrase in the note that fixes it. Both new
     # rules caught it, which is them working.
     HEX_PROBE = "a1b2c3d4" + "e5f6a7b8" + "c9d0e1f2" + "a3b4c5d6"
     shapes = {
@@ -2025,7 +2024,7 @@ def test_a_credential_shaped_value_is_caught_through_any_escaping():
 
 def test_env_example_matches_what_the_code_reads():
     """Equal in BOTH directions. A documented-but-unread variable is worse
-    than an undocumented one (CLAUDE.md §3)."""
+    than an undocumented one."""
     import env_config
     path = os.path.join(HERE, ".env.example")
     if not os.path.exists(path):
@@ -2043,7 +2042,7 @@ def test_env_example_matches_what_the_code_reads():
 
 
 def test_copied_env_example_reads_as_unset():
-    """CLAUDE.md §17: `cp .env.example .env` must not read as CONFIGURED.
+    """`cp .env.example .env` must not read as CONFIGURED.
 
     A literal-only placeholder check passed both credentialled URLs through,
     so a copied example connected with the string `{login}-zone-…` as its
@@ -2229,7 +2228,7 @@ def test_the_browserless_cli_is_runnable_and_honest():
 
 
 def test_a_usage_error_exits_2_not_1():
-    """§9's table says 2 is bad usage and 1 is a crash.
+    """The exit table says 2 is bad usage and 1 is a crash.
 
     Every CLI here raised a bare `SystemExit("message")` for a missing or
     unreadable --url, which exits 1 — so a typo reported itself as a crash
@@ -2297,7 +2296,7 @@ def test_complete_stop_reasons():
 
 
 def test_pagination_is_asked_per_url():
-    """CLAUDE.md §18: the question is per URL, not per site."""
+    """The question is per URL, not per site."""
     import page_flow as F
     import product_parser as P
     check(not F.pagination_is_addressable(P.hot_feed_url()),
@@ -2312,7 +2311,7 @@ def test_masking_is_global_and_keeps_host_and_port():
     import weibo_api as W
     got = W.mask_secrets("key=aaa key=bbb key=ccc")
     eq(got, "key=*** key=*** key=***",
-       "every occurrence is masked, not just the first (CLAUDE.md §8)")
+       "every occurrence is masked, not just the first")
     got = W.mask_secrets("http://user:secret@1.2.3.4:8080/x")
     check("secret" not in got, "a proxy password is masked")
     check("1.2.3.4:8080" in got,
@@ -2322,7 +2321,7 @@ def test_masking_is_global_and_keeps_host_and_port():
 
 def test_visitor_client_fails_loudly():
     """A function returning {} on error is this codebase's most common
-    historical bug class (CLAUDE.md §8)."""
+    historical bug class."""
     import weibo_api as W
     check(issubclass(W.VisitorError, Exception), "VisitorError exists")
     check(issubclass(W.TransportError, Exception),
@@ -2341,7 +2340,7 @@ def test_visitor_client_fails_loudly():
 # The suite must pass with no engine library installed at all. For that to
 # mean anything CI installs each engine in its own venv and fails if that
 # engine's group reports a skip: "skipped, engine absent" reads identically
-# to a real import error (CLAUDE.md §10).
+# to a real import error.
 
 def _engine_checks(mod, name):
     args = mod.parse_args(["--mode", "hot", "--pages", "2", "--out", "x"])
@@ -2371,7 +2370,7 @@ def _engine_checks(mod, name):
         mod.parse_args(["--mode", "user", "--url", "https://weibo.com/u/123456"]))
     eq(uid, "123456", f"{name}: account id read from the URL")
 
-    # A proxy failure is named, and is not a timeout (CLAUDE.md §8).
+    # A proxy failure is named, and is not a timeout.
     eq(mod._proxy_failure(Exception("net::ERR_TUNNEL_CONNECTION_FAILED at x")),
        "ERR_TUNNEL_CONNECTION_FAILED", f"{name}: a dead proxy is recognised")
     eq(mod._proxy_failure(Exception("Timeout 30000ms exceeded")), "",
@@ -2379,9 +2378,9 @@ def _engine_checks(mod, name):
 
     check(mod.MIN_CARD_MATCHES > 1,
           f"{name}: MIN_CARD_MATCHES > 1 — waiting for ONE match resolves on "
-          "something unrelated long before the feed is there (§5)")
+          "something unrelated long before the feed is there")
 
-    # Credentials never reach a command line (§8).
+    # Credentials never reach a command line.
     # A DISTINCTIVE password, because a one-letter one is a substring of
     # "http" and an assertion that it is absent from the server string
     # passes for the wrong reason.
@@ -2423,7 +2422,7 @@ def test_playwright_engine():
        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
        "playwright: the UA is built from the installed Chromium, not a "
-       "literal (CLAUDE.md §8)")
+       "literal")
 
 
 def test_puppeteer_engine():
@@ -2432,6 +2431,78 @@ def test_puppeteer_engine():
     except ImportError as exc:
         return skip("puppeteer", str(exc))
     _engine_checks(m, "puppeteer")
+    _puppeteer_proxy_auth_fallback(m)
+
+
+def _puppeteer_proxy_auth_fallback(m):
+    """`page.authenticate` needs a CDP method current Chromium lacks.
+
+    Only that specific error falls back to CDP's Fetch domain, which answers
+    a PROXY auth challenge with the credentials and leaves any other
+    challenge to the default. Driven with a fake page and CDP session; the
+    fallback has not been run against a live proxy here.
+    """
+    import asyncio
+
+    class _Cdp:
+        def __init__(self):
+            self.sent, self.handlers = [], {}
+
+        def on(self, event, fn):
+            self.handlers[event] = fn
+
+        async def send(self, method, params=None):
+            self.sent.append((method, params))
+
+    class _Target:
+        def __init__(self, cdp):
+            self.cdp = cdp
+
+        async def createCDPSession(self):
+            return self.cdp
+
+    class _Page:
+        def __init__(self, error):
+            self.error, self.target = error, _Target(_Cdp())
+
+        async def authenticate(self, creds):
+            if self.error:
+                raise Exception(self.error)
+
+    async def _drive(page):
+        session = m._BrowserSession.__new__(m._BrowserSession)
+        session.page = page
+        await session._authenticate_proxy("user", "secret")
+        handlers = page.target.cdp.handlers
+        if "Fetch.authRequired" in handlers:
+            handlers["Fetch.authRequired"](
+                {"requestId": "1", "authChallenge": {"source": "Proxy"}})
+            handlers["Fetch.authRequired"](
+                {"requestId": "2", "authChallenge": {"source": "Server"}})
+            await asyncio.sleep(0)
+        return page.target.cdp.sent
+
+    loop = asyncio.new_event_loop()
+    try:
+        sent = loop.run_until_complete(_drive(_Page(
+            "Protocol error (Network.setRequestInterception): "
+            "'Network.setRequestInterception' wasn't found")))
+        check(("Fetch.enable", {"handleAuthRequests": True,
+                                "patterns": [{"urlPattern": "*"}]}) in sent,
+              "puppeteer: the removed-method error falls back to CDP Fetch")
+        answers = {p["requestId"]: p["authChallengeResponse"]["response"]
+                   for meth, p in sent if meth == "Fetch.continueWithAuth"}
+        eq(answers, {"1": "ProvideCredentials", "2": "Default"},
+           "puppeteer: only the PROXY challenge gets the credentials")
+        eq(loop.run_until_complete(_drive(_Page(None))), [],
+           "puppeteer: a working page.authenticate needs no fallback")
+        try:
+            loop.run_until_complete(_drive(_Page("some other failure")))
+            check(False, "puppeteer: any other error must propagate")
+        except Exception:  # noqa: BLE001
+            check(True, "puppeteer: any other error propagates")
+    finally:
+        loop.close()
 
 
 def test_selenium_engine():
@@ -2443,7 +2514,7 @@ def test_selenium_engine():
 
 
 def test_cdp_and_proxy_are_refused_together():
-    """The Scraping Browser already proxies (CLAUDE.md §20)."""
+    """The Scraping Browser already proxies."""
     for name in ENGINES:
         src = open(os.path.join(HERE, f"{name}.py"), encoding="utf-8").read()
         check("cannot be combined with --cdp-endpoint" in src,
@@ -2452,7 +2523,7 @@ def test_cdp_and_proxy_are_refused_together():
 
 
 def test_selenium_states_what_it_cannot_do():
-    """A known limitation, pinned rather than half-guarded (§10)."""
+    """A known limitation, pinned rather than half-guarded."""
     src = open(os.path.join(HERE, "selenium_scraper.py"), encoding="utf-8").read()
     check("debuggerAddress" in src and "nowhere to put a password" in src,
           "selenium names the real reason an authenticated CDP endpoint is "
@@ -2464,7 +2535,7 @@ def test_selenium_states_what_it_cannot_do():
 # The modules the no-JavaScript rule applies to. NOT the same list as
 # SHARED_MODULES, and the difference is the rule's actual subject.
 #
-# CLAUDE.md §1 is about the modules that sit BETWEEN the engines as policy
+# The no-JavaScript rule is about the modules that sit BETWEEN the engines as policy
 # and pure algorithms: a JS snippet there quietly acquires one driver's
 # dialect, because Selenium's `execute_script` takes a function BODY with an
 # explicit `return` while the other two take `() => expr`.
@@ -2481,7 +2552,7 @@ POLICY_MODULES = ("page_flow", "product_parser", "output_writer",
 
 
 def test_no_javascript_in_the_policy_modules():
-    """CLAUDE.md §1: let NO JavaScript cross that boundary.
+    """Let NO JavaScript cross that boundary.
 
     Selenium's `execute_script` takes a function BODY with an explicit
     `return` while Playwright and pyppeteer take `() => expr`, so a shared
@@ -2573,6 +2644,552 @@ def test_scraper_api_waitfor_is_object_and_status_is_http_code():
     check(status == 403 and isinstance(status, int),
           f"Scraper API: the status handed onward must be the target's "
           f"http_code 403 (int), not the API's own verdict, got {status!r}")
+
+
+# ---------------------------------------------------------------------------
+# Output modes, run outcomes and CLI validation (audit 2026-10-14)
+# ---------------------------------------------------------------------------
+
+def test_output_files_get_umask_modes_and_keep_an_existing_mode():
+    """`NamedTemporaryFile` creates 0600 and a rename keeps it.
+
+    Every output (rows, CSV, sidecar) came out readable by its owner alone,
+    and an existing file's mode was reset to 0600 by the next run. A new
+    file must get `0o666 & ~umask`, as `open()` would give it, and an
+    existing file must keep the mode it has.
+    """
+    import output_writer as O
+    if os.name != "posix":
+        return skip("modes", "POSIX file modes only")
+    rows = [O.Post(sku="a", title="t")]
+    for umask, want in ((0o022, 0o644), (0o002, 0o664), (0o077, 0o600)):
+        old = os.umask(umask)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                out = os.path.join(d, "run")
+                O.finish_run(rows, out, "both", False, blocked=False,
+                             stop_reason="completed", pages_requested=1,
+                             pages_completed=1, start_url="u", final_url="u",
+                             mode="hot")
+                for ext in (".json", ".csv", ".meta.json"):
+                    got = os.stat(out + ext).st_mode & 0o777
+                    eq(oct(got), oct(want),
+                       f"umask {oct(umask)}: new {ext} gets {oct(want)}")
+        finally:
+            os.umask(old)
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "kept.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("[]")
+        os.chmod(path, 0o640)
+        O.write_json(rows, path)
+        eq(oct(os.stat(path).st_mode & 0o777), oct(0o640),
+           "an existing file keeps its own mode across a rewrite")
+        check(not [n for n in os.listdir(d) if n.endswith(".tmp")],
+              "no temporary file is left behind")
+
+
+def test_csv_escapes_a_leading_line_feed_and_keeps_a_callers_count():
+    import output_writer as O
+    eq(O._csv_cell("\nlf"), "'\nlf", "a leading line feed is escaped too")
+    eq(O._csv_cell("\rcr"), "'\rcr", "a leading carriage return is escaped")
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "run")
+        O.finish_run([O.Post(sku="a", title="=x")], out, "csv", False,
+                     blocked=False, stop_reason="completed",
+                     pages_requested=1, pages_completed=1, start_url="u",
+                     final_url="u", mode="hot",
+                     extra={"csv_cells_escaped": "CALLER"})
+        meta = json.load(open(out + ".meta.json", encoding="utf-8"))
+        eq(meta.get("csv_cells_escaped"), "CALLER",
+           "a value the caller passed under the same key is not overwritten")
+
+
+def test_a_rendered_challenge_is_classified_as_one():
+    """`challenge` must be a state `classify` can actually produce.
+
+    The policy row existed and nothing returned it, so a rendered GeeTest or
+    Yidun body was retried as `unknown` and ended as "never reached" (5)
+    instead of blocked (3). The vendors' LOADERS sit on good pages, so only
+    the rendered-widget vocabulary may count.
+    """
+    import page_flow as F
+    for body in ("<div class='geetest_panel'>verify</div>",
+                 "<div class=\"yidun_panel\"></div>"):
+        for status in (200, 403):
+            eq(F.classify(body, status), "challenge",
+               f"a rendered widget under HTTP {status} is a challenge")
+    eq(F.classify(SERVED_HTML, 200) == "challenge", False,
+       "the served page (which LOADS both vendors) is not a challenge")
+    eq(F.classify(EXTENSION_INJECTED_PAGE, 200) == "challenge", False,
+       "a Scraping Browser page with its injected hunters is not a challenge")
+    eq(F.classify(json.dumps(HOT), 200), "content",
+       "a JSON payload is still read as a payload")
+    check(F.should_solve("challenge") and F.counts_as_blocked("challenge"),
+          "a challenge may be solved, and otherwise counts as blocked")
+
+
+def test_unresolved_post_and_parser_failure_outcomes():
+    import output_writer as O
+    import page_flow as F
+    eq(F.unresolved_post_outcome("login_wall"), (True, "login_wall"),
+       "a wall in front of /statuses/show is blocked")
+    eq(F.unresolved_post_outcome("empty"), (False, "post_not_found"),
+       "a post the site says does not exist is a real answer")
+    check(not F.unresolved_post_outcome("unknown")[0]
+          and F.unresolved_post_outcome("unknown")[1]
+          not in O.COMPLETE_STOP_REASONS,
+          "anything else is a lookup that never got its answer")
+    check("post_not_found" in O.COMPLETE_STOP_REASONS,
+          "post_not_found is complete")
+    check(F.PARSER_FAILURE_REASON not in O.COMPLETE_STOP_REASONS,
+          "a parser failure is never a complete reason")
+    check(F.served_rows_we_could_not_read("content", []),
+          "content with zero parsed rows is a parser failure")
+    check(not F.served_rows_we_could_not_read("empty", []),
+          "an empty list is an answer, not a failure")
+
+
+def _numeric_flag_refusals(parse, name, flags):
+    for argv in flags:
+        try:
+            parse(argv)
+            check(False, f"{name}: {argv} must be refused")
+        except SystemExit as exc:
+            eq(exc.code, 2, f"{name}: {argv} is a usage error (exit 2)")
+
+
+NEGATIVE_FLAG_CASES = (["--retries", "-1"], ["--retries", "-5"],
+                       ["--delay", "-3"], ["--retry-delay", "-1"],
+                       ["--pages", "0"])
+
+
+def test_the_browserless_cli_refuses_bad_numbers():
+    import weibo_api as W
+    _numeric_flag_refusals(W.parse_args, "weibo_api",
+                           NEGATIVE_FLAG_CASES + (["--category", "abc"],))
+    eq(W.parse_args(["--retries", "0"]).retries, 0,
+       "weibo_api: --retries 0 (one attempt) is legal")
+
+
+def test_scraper_api_client_defaults_and_numbers():
+    import scraper_api_client as S
+    old = sys.argv
+    try:
+        sys.argv = ["scraper_api_client.py"]
+        eq(S.parse_args().mode, "hot",
+           "the default --mode is one the parser has (it was 'profile')")
+        for argv in (["--retries", "-1"], ["--retry-delay", "-1"],
+                     ["--timeout", "0"]):
+            sys.argv = ["scraper_api_client.py"] + argv
+            try:
+                S.parse_args()
+                check(False, f"scraper_api_client: {argv} must be refused")
+            except SystemExit as exc:
+                eq(exc.code, 2, f"scraper_api_client: {argv} exits 2")
+    finally:
+        sys.argv = old
+
+
+class _FakeClient:
+    """Stands in for weibo_api.WeiboClient: answers from a script by URL."""
+    script = {}
+    calls = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def fetch(self, url, allow_mint=True):
+        _FakeClient.calls.append(url)
+        for key, answers in _FakeClient.script.items():
+            if key in url:
+                ans = answers.pop(0) if len(answers) > 1 else answers[0]
+                if isinstance(ans, Exception):
+                    raise ans
+                return ans
+        raise AssertionError(f"unscripted URL {url}")
+
+
+def _browserless_run(script, argv):
+    import weibo_api as W
+    _FakeClient.script = {k: list(v) for k, v in script.items()}
+    _FakeClient.script.setdefault("statuses/longtext",
+                                  [("empty", LONGTEXT_EMPTY)])
+    _FakeClient.calls = []
+    real = W.WeiboClient
+    W.WeiboClient = _FakeClient
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            args = W.parse_args(argv + ["--out", os.path.join(d, "o"),
+                                        "--retry-delay", "0", "--delay", "0"])
+            rc = W.scrape(args)
+            meta_path = os.path.join(d, "o.meta.json")
+            meta = (json.load(open(meta_path, encoding="utf-8"))
+                    if os.path.exists(meta_path) else None)
+            return rc, meta
+    finally:
+        W.WeiboClient = real
+
+
+def _renamed_ids(payload):
+    """The hot fixture with every id key renamed: served, unreadable."""
+    text = json.dumps(payload)
+    for key in ('"mblogid"', '"mid"', '"idstr"', '"id"'):
+        text = text.replace(key, key[:-1] + '_renamed"')
+    return json.loads(text)
+
+
+def test_browserless_run_outcomes():
+    """The exit codes the browserless CLI gives, driven through scrape()."""
+    import page_flow as F
+    hot = ("content", HOT)
+    unreadable = ("content", _renamed_ids(HOT))
+
+    rc, meta = _browserless_run({"hottimeline": [unreadable]}, ["--mode", "hot"])
+    eq(rc, 5, "served rows the parser cannot read, on page 1: exit 5, not 4")
+    rc, meta = _browserless_run({"hottimeline": [hot, unreadable]},
+                                ["--mode", "hot", "--pages", "2"])
+    eq(rc, 6, "the same on page 2: a partial run (exit 6)")
+    eq((meta or {}).get("stop_reason"), F.PARSER_FAILURE_REASON,
+       "and the sidecar names the parser failure")
+
+    post = ["--mode", "post", "--url", "https://weibo.com/2803301701/RiPCAfklU"]
+    rc, _ = _browserless_run({"statuses/show": [("login_wall", LOGIN_WALL)]}, post)
+    eq(rc, 3, "--mode post: a walled /statuses/show is blocked (3), not 4")
+    rc, _ = _browserless_run({"statuses/show": [("unknown", {})]}, post)
+    eq(rc, 5, "--mode post: a lookup that never answered is 5, not 4")
+    rc, _ = _browserless_run({"statuses/show": [("empty", DELETED)]}, post)
+    eq(rc, 4, "--mode post: a post the site says does not exist is 4")
+
+    # Retries: a transient answer is retried, a wall is not.
+    rc, _ = _browserless_run({"hottimeline": [("unknown", {}), hot]},
+                             ["--mode", "hot"])
+    eq(rc, 0, "a transient answer on attempt 1 is retried")
+    eq(len([u for u in _FakeClient.calls if "hottimeline" in u]), 2,
+       "exactly one retry was needed")
+    rc, _ = _browserless_run({"hottimeline": [("login_wall", LOGIN_WALL)]},
+                             ["--mode", "hot", "--retries", "3"])
+    eq(len([u for u in _FakeClient.calls if "hottimeline" in u]), 1,
+       "a wall is not retried")
+    eq(rc, 3, "and it is blocked")
+
+    # --category reaches the URL.
+    _browserless_run({"hottimeline": [hot]},
+                     ["--mode", "hot", "--category", "999999"])
+    check(_FakeClient.calls and "group_id=999999" in _FakeClient.calls[0],
+          "--category is the feed group the request asks for")
+
+
+# --- the browser engines, driven with a fake session -----------------------
+
+def _fake_engine_env(mod, name, responses, *, remint_raises=False,
+                     profile_raises=None, show_raises=None):
+    """Patch `mod` so `scrape()` runs against scripted API answers.
+
+    `responses` maps a URL fragment to a list of `(status, body)` answers,
+    consumed in order (the last one repeats). Returns a restore function and
+    a dict that records what happened.
+    """
+    rec = {"urls": [], "captcha_calls": 0, "solves": 0}
+    is_async = name == "puppeteer"
+    script = {k: list(v) for k, v in responses.items()}
+    script.setdefault("statuses/longtext", [(200, LONGTEXT_EMPTY)])
+
+    def _answer(url):
+        rec["urls"].append(url)
+        if profile_raises and "profile/info" in url:
+            raise profile_raises
+        if show_raises and "statuses/show" in url:
+            raise show_raises
+        for key, answers in script.items():
+            if key in url:
+                ans = answers.pop(0) if len(answers) > 1 else answers[0]
+                return ans[0], (ans[1] if isinstance(ans[1], str)
+                                else json.dumps(ans[1]))
+        raise AssertionError(f"unscripted URL {url}")
+
+    def _handle(page, args, budget):
+        rec["captcha_calls"] += 1
+        if not budget.may_solve():
+            return False
+        budget.charge()
+        rec["solves"] += 1
+        return False
+
+    class _Sync:
+        def __init__(self, *a, **k):
+            self.page = self.driver = object()
+
+        def remint_visitor(self):
+            if remint_raises:
+                raise RuntimeError("visitor handshake could not reach passport")
+
+        def close(self):
+            pass
+
+    class _Async:
+        def __init__(self, *a, **k):
+            self.page = object()
+
+        async def open(self):
+            pass
+
+        async def remint_visitor(self):
+            if remint_raises:
+                raise RuntimeError("visitor handshake could not reach passport")
+
+        async def close(self):
+            pass
+
+    patches = {"_BrowserSession": _Async if is_async else _Sync}
+    if is_async:
+        async def _api(session, url):
+            return _answer(url)
+
+        async def _hc(page, args, budget):
+            return _handle(page, args, budget)
+        patches["_api_get"], patches["handle_captcha_if_present"] = _api, _hc
+    else:
+        patches["_api_get"] = lambda session, url: _answer(url)
+        patches["handle_captcha_if_present"] = _handle
+    if hasattr(mod, "sync_playwright"):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _pw():
+            yield object()
+        patches["sync_playwright"] = _pw
+    saved = {k: getattr(mod, k) for k in patches}
+    for k, v in patches.items():
+        setattr(mod, k, v)
+
+    def restore():
+        for k, v in saved.items():
+            setattr(mod, k, v)
+    return restore, rec
+
+
+def _engine_run(mod, name, responses, argv, **kw):
+    restore, rec = _fake_engine_env(mod, name, responses, **kw)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            args = mod.parse_args(argv + ["--out", os.path.join(d, "o"),
+                                          "--retry-delay", "0", "--delay", "0"])
+            if name == "puppeteer":
+                import asyncio
+                loop = asyncio.new_event_loop()
+                try:
+                    rc = loop.run_until_complete(mod._scrape_async(args))
+                finally:
+                    loop.close()
+            else:
+                rc = mod.scrape(args)
+            meta_path = os.path.join(d, "o.meta.json")
+            rec["meta"] = (json.load(open(meta_path, encoding="utf-8"))
+                           if os.path.exists(meta_path) else None)
+            rec["rc"] = rc
+    finally:
+        restore()
+    return rec
+
+
+def _engine_outcome_checks(mod, name):
+    import page_flow as F
+    hot = (200, HOT)
+    unknown = (200, "<html><body>something else</body></html>")
+
+    # One paid solve per page, across every attempt.
+    rec = _engine_run(mod, name, {"hottimeline": [unknown]},
+                      ["--mode", "hot", "--retries", "2",
+                       "--solve-captcha", "always"])
+    eq(rec["captcha_calls"], 3, f"{name}: `always` checks before each attempt")
+    eq(rec["solves"], 1, f"{name}: but buys at most ONE solve for the page "
+                         "across 3 attempts")
+    rec = _engine_run(mod, name, {"hottimeline": [unknown]},
+                      ["--mode", "hot", "--retries", "2"])
+    eq(rec["captcha_calls"], 0, f"{name}: `when-blocked` buys nothing before "
+                                "a response is classified as a challenge")
+
+    rec = _engine_run(mod, name, {"hottimeline": [
+        (200, "<div class='geetest_panel'>verify</div>")]}, ["--mode", "hot"])
+    eq(rec["rc"], 3, f"{name}: a rendered challenge ends as blocked (3)")
+    eq(rec["solves"], 1, f"{name}: after one solve attempt at most")
+
+    rec = _engine_run(mod, name, {"hottimeline": [(200, _renamed_ids(HOT))]},
+                      ["--mode", "hot"])
+    eq(rec["rc"], 5, f"{name}: served rows the parser cannot read: exit 5")
+    rec = _engine_run(mod, name, {"hottimeline": [hot, (200, _renamed_ids(HOT))]},
+                      ["--mode", "hot", "--pages", "2"])
+    eq(rec["rc"], 6, f"{name}: the same on page 2 is a partial run (6)")
+    eq((rec["meta"] or {}).get("stop_reason"), F.PARSER_FAILURE_REASON,
+       f"{name}: and the sidecar says why")
+
+    post = ["--mode", "post", "--url", "https://weibo.com/2803301701/RiPCAfklU"]
+    eq(_engine_run(mod, name, {"statuses/show": [(403, LOGIN_WALL)]},
+                   post)["rc"], 3, f"{name}: --mode post, walled lookup: 3")
+    eq(_engine_run(mod, name, {"statuses/show": [unknown]}, post)["rc"], 5,
+       f"{name}: --mode post, unanswered lookup: 5, not 4")
+    eq(_engine_run(mod, name, {"statuses/show": [(200, DELETED)]}, post)["rc"],
+       4, f"{name}: --mode post, the post does not exist: 4")
+    eq(_engine_run(mod, name, {}, post,
+                   show_raises=RuntimeError("timed out"))["rc"], 5,
+       f"{name}: --mode post, a lookup that raised: 5, not a crash")
+
+    user = ["--mode", "user", "--url", "https://weibo.com/u/123456"]
+    rec = _engine_run(mod, name, {"getWaterFallContent": [(200, USER)]},
+                      user, profile_raises=RuntimeError("timed out"))
+    eq(rec["rc"], 0, f"{name}: a failed profile call does not crash the run")
+
+    rec = _engine_run(mod, name, {"hottimeline": [(200, NEEDS_VISITOR)]},
+                      ["--mode", "hot", "--retries", "1"], remint_raises=True)
+    eq(rec["rc"], 5, f"{name}: a failed visitor re-mint is a page error (5), "
+                     "not an exception")
+
+    rec = _engine_run(mod, name, {"hottimeline": [hot]},
+                      ["--mode", "hot", "--category", "999999"])
+    check(rec["urls"] and "group_id=999999" in rec["urls"][0],
+          f"{name}: --category is the feed group the request asks for")
+
+    refusals = NEGATIVE_FLAG_CASES + (
+        ["--concurrency", "0"], ["--concurrency", "2"],
+        ["--proxy-block-retries", "-1"], ["--category", "abc"])
+    if name != "playwright":
+        refusals += (["--fingerprint"],)
+    _numeric_flag_refusals(mod.parse_args, name, refusals)
+
+
+def test_engine_outcomes_playwright():
+    try:
+        import playwright_scraper as m
+    except ImportError as exc:
+        return skip("playwright outcomes", str(exc))
+    _engine_outcome_checks(m, "playwright")
+
+
+def test_engine_outcomes_puppeteer():
+    try:
+        import puppeteer_scraper as m
+    except ImportError as exc:
+        return skip("puppeteer outcomes", str(exc))
+    _engine_outcome_checks(m, "puppeteer")
+
+
+def test_engine_outcomes_selenium():
+    try:
+        import selenium_scraper as m
+    except ImportError as exc:
+        return skip("selenium outcomes", str(exc))
+    _engine_outcome_checks(m, "selenium")
+
+
+def test_solve_budget_is_created_once_per_page():
+    """Source half of the budget rule, so it is checked without an engine.
+
+    `SolveBudget()` inside the retry loop gave every attempt a fresh
+    allowance: three purchases against a limit of one.
+    """
+    for name in ENGINES:
+        tree = ast.parse(open(os.path.join(HERE, f"{name}.py"),
+                              encoding="utf-8").read())
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and n.name == "_fetch_one")
+        in_loop = [c for loop in ast.walk(fn) if isinstance(loop, ast.For)
+                   for c in ast.walk(loop) if isinstance(c, ast.Call)
+                   and getattr(c.func, "attr", None) == "SolveBudget"]
+        check(not in_loop, f"{name}: SolveBudget() is created before the "
+                           "retry loop, not per attempt")
+
+
+# --- the credential scan ----------------------------------------------------
+
+def _scan_copy(parent_name, plants):
+    """Copy the tracked tree under `<tmp>/<parent_name>/clone`, plant files,
+    run `ci_checks.py --secret-check`, return (exit code, output)."""
+    import shutil
+    import subprocess
+    tracked = subprocess.run(["git", "ls-files"], cwd=HERE, capture_output=True,
+                             text=True).stdout.split()
+    with tempfile.TemporaryDirectory() as d:
+        root = os.path.join(d, parent_name, "clone")
+        for rel in tracked:
+            src = os.path.join(HERE, rel)
+            if not os.path.isfile(src):
+                continue
+            dst = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+        for rel, text in plants.items():
+            with open(os.path.join(root, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        res = subprocess.run([sys.executable, "-B",
+                              os.path.join(root, ".github", "ci_checks.py"),
+                              "--secret-check"], cwd=root,
+                             capture_output=True, text=True)
+        return res.returncode, res.stdout + res.stderr
+
+
+def test_the_credential_scan_reads_the_tree_wherever_it_lives():
+    """Exclusions are judged relative to the repository, not the disk.
+
+    A clone under any parent directory named `venv` scanned 0 files and said
+    "ok", and `.env.bak` / `.json` were never read at all.
+    """
+    import subprocess
+    if not os.path.isdir(os.path.join(HERE, ".github")):
+        return skip("ci_checks", "no .github directory (the Docker image)")
+    if subprocess.run(["git", "rev-parse"], cwd=HERE,
+                      capture_output=True).returncode != 0:
+        return skip("ci_checks scan copy", "not a git checkout")
+    key = "0f1e2d3c" + "4b5a6978" + "8796a5b4" + "c3d2e1f0"
+    for parent in ("venv", ".venv", "plain"):
+        rc, out = _scan_copy(parent, {})
+        eq(rc, 0, f"a clean clone under a parent named {parent!r} passes")
+        check("ok" in out and " 0 files" not in out,
+              f"and actually scanned files under {parent!r}: {out.strip()[:80]}")
+        rc, out = _scan_copy(parent, {"scratch.py": f"k = '{key}'\n"})
+        eq(rc, 1, f"a planted key is caught under a parent named {parent!r}")
+    for rel in (".env.bak", ".env.local", "notes.json", "dump.html"):
+        rc, out = _scan_copy("plain", {rel: f"TWOCAPTCHA_KEY={key}\n"})
+        eq(rc, 1, f"a key in an untracked {rel} is caught")
+
+
+# --- private instruction citations ------------------------------------------
+
+def test_no_private_instruction_citations_ship():
+    """Public files state their rules in their own words.
+
+    The repository once cited a private instruction file and its numbered
+    sections hundreds of times, in code comments, help text, workflows and
+    the changelog. The tokens are assembled from pieces so this file does
+    not match itself.
+    """
+    import re as _re
+    import subprocess
+    res = subprocess.run(["git", "ls-files"], cwd=HERE, capture_output=True,
+                         text=True)
+    if res.returncode != 0:
+        return skip("citations", "not a git checkout")
+    banned = _re.compile(
+        "|".join([_re.escape("CLAUDE" + ".md"),
+                  _re.escape("claude" + "_2scraper"),
+                  _re.escape("2scraper" + "_repo_rules"),
+                  "play" + r"book\s*§", "tem" + r"plate\s*§",
+                  "§" + r"\s?\d"]), _re.I)
+    hits = []
+    for rel in res.stdout.split():
+        path = os.path.join(HERE, rel)
+        if not os.path.isfile(path):
+            continue
+        try:
+            text = open(path, encoding="utf-8").read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if banned.search(line):
+                hits.append(f"{rel}:{lineno}")
+    check(not hits, f"private instruction citations in public files: "
+                    f"{hits[:10]}")
 
 
 def main():

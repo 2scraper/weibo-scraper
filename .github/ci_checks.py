@@ -33,8 +33,9 @@ REPO = Path(__file__).resolve().parent.parent
 # need them. An ImportError naming one of these is expected, not a failure.
 ENGINE_LIBS = ("playwright", "pyppeteer", "selenium", "webdriver_manager")
 
-CLIS = ["playwright_scraper.py", "puppeteer_scraper.py", "selenium_scraper.py",
-        "scraper_api_client.py", "fingerprint_client.py", "env_config.py"]
+CLIS = ["weibo_api.py", "playwright_scraper.py", "puppeteer_scraper.py",
+        "selenium_scraper.py", "scraper_api_client.py", "fingerprint_client.py",
+        "env_config.py"]
 
 SAMPLE_FILES = ("sample_output.json", "sample_output.csv")
 
@@ -81,7 +82,7 @@ CREDENTIAL_ALLOWED = (
 HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 # Contexts in which a 32-hex string is plainly not a key. Site-specific
 # entries belong here only once a committed fixture actually carries one —
-# CLAUDE.md §16: a family-wide entry copied without checking is how dead
+# A family-wide entry copied without checking is how dead
 # code spreads. Kept as a CONTEXT allowlist rather than by loosening the
 # pattern: a bare 32-hex string anywhere else still fails, which is the
 # point of the check.
@@ -91,7 +92,7 @@ HEX32_ALLOWED = ("sha", "hash", "nonce", "example", "md5", "digest",
 # A credential-shaped VALUE sitting in a credential-shaped FIELD, whatever
 # alphabet it uses.
 #
-# Two things this repo could not see before, both from CLAUDE.md §24:
+# Two things this repo could not see before, both found by audits:
 #
 #   * the bare-hex rule above is blind to a 32-char ALPHANUMERIC key, which
 #     is what several sites' front-end keys look like. Planted in this
@@ -113,11 +114,31 @@ KEY_SHAPED_FIELD = re.compile(
     re.I)
 
 # Values that are documented placeholders rather than credentials. Named,
-# not pattern-matched, so adding one stays a decision (§17).
+# not pattern-matched, so adding one stays a decision.
 KEY_SHAPED_ALLOWED = ("your_", "placeholder", "scrubbed", "example",
                       "changeme", "xxxx", "<", "{")
 
-SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example")
+SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example",
+                    # Data files: a captured response or a stray export is
+                    # exactly where a front-end key or a pasted one arrives.
+                    ".json", ".html", ".htm", ".csv", ".toml", ".cfg", ".ini",
+                    ".sh", ".env")
+
+# Directories that are never the repository's own content, matched against
+# the path RELATIVE to the repository root. Matching the absolute path made
+# a clone under any parent directory named `venv` scan zero files and
+# report "ok".
+SKIPPED_DIRS = {".git", "__pycache__", ".venv", "venv"}
+
+
+def _is_scanned_name(path):
+    """Whether a file's NAME puts it in the scan.
+
+    Every `.env*` variant is read (`.env`, `.env.bak`, `.env.local`, ...):
+    a backup of a real `.env` is the classic way a live key ends up beside
+    the code. `.env.example` is covered by its suffix as before.
+    """
+    return path.suffix in SCANNED_SUFFIXES or path.name.startswith(".env")
 
 
 # A directory holding `pyvenv.cfg` is a virtualenv, whatever it is called.
@@ -128,7 +149,7 @@ SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example")
 # into pip's vendored code and flags a 32-hex string in `_elffile.py` as
 # key-shaped. Correct about the string, wrong about the file — and it is the
 # FIRST thing a new user sees from `python3 smoke_test.py`. A guard people
-# have to argue with is one they learn to suppress (CLAUDE.md §22).
+# have to argue with is one they learn to suppress.
 #
 # Deliberately NOT a narrowing of what gets scanned: an untracked file is
 # still read, because a key pasted into a scratch file beside the scripts is
@@ -157,10 +178,10 @@ def _is_in_virtualenv(path):
 
 def scanned_files():
     for path in sorted(REPO.rglob("*")):
-        if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
+        if not path.is_file() or not _is_scanned_name(path):
             continue
-        if any(part in {".git", "__pycache__", ".venv", "venv"}
-               for part in path.parts):
+        if any(part in SKIPPED_DIRS
+               for part in path.relative_to(REPO).parts):
             continue
         if _is_in_virtualenv(path):
             continue
@@ -226,9 +247,8 @@ def sample_check():
         failed.append("sample_output.csv header differs from output_writer.Post")
 
     if not failed:
-        discounted = sum(1 for r in rows if r.get("original_price"))
         print(f"ok       {len(rows)} rows, {len(expected)} columns, "
-              f"{discounted} discounted, schema matches")
+              f"schema matches")
     return failed
 
 
@@ -259,6 +279,11 @@ def secret_check():
                     f"{rel}:{lineno} has {field!r} set to {value[:6]}… — a "
                     f"credential-shaped value in a credential-shaped field")
 
+    if not scanned:
+        # A scan that read nothing has proved nothing. This is the guard
+        # against an exclusion rule that silently swallows the whole tree.
+        failed.append(f"0 files scanned under {REPO} — the exclusion rules "
+                      f"matched everything, so nothing was checked")
     if not failed:
         print(f"ok       {scanned} files scanned, nothing credential-shaped")
     return failed

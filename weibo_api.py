@@ -27,15 +27,15 @@ It is not a login, and it does not pretend to be one. A visitor cookie
 opens the feed, profiles, single posts, comments and likers; it does NOT
 open `/ajax/statuses/mymblog`, Weibo's search, or anything on m.weibo.cn.
 Those want an account, and this repo does not implement account login —
-which is a TODO rather than a limitation of the site or of any product
-(CLAUDE.md §19). If you need them, the honest answer is "not implemented
+which is a TODO rather than a limitation of the site or of any product.
+If you need them, the honest answer is "not implemented
 here", not "impossible".
 
 Credentials
 ------------
 The handshake itself carries no secret of ours. A PROXY URL does, and
 `requests` puts the full URL — credentials included — into the text of
-`HTTPError` and of every connection error it raises (CLAUDE.md §8). So
+`HTTPError` and of every connection error it raises. So
 every call below is wrapped, and anything that escapes is re-raised with
 the credentials masked GLOBALLY rather than once: a masker that handles the
 first occurrence prints the password the other four times and looks like it
@@ -58,7 +58,7 @@ log = logging.getLogger("weibo_api")
 
 # Bound every remote call. Neither `requests` nor any browser library in
 # this family provides a default, and an unbounded fetch is how a run hangs
-# instead of reporting a timeout (CLAUDE.md §8).
+# instead of reporting a timeout.
 HTTP_TIMEOUT = 25
 
 # The handshake's fingerprint blob. Weibo's own page sends a description of
@@ -75,7 +75,7 @@ _VISITOR_FP = {
 }
 
 # A real desktop Chrome UA. Overridden by the engines with the actual
-# browser's own string — CLAUDE.md §8: the user agent comes from the
+# browser's own string — The user agent comes from the
 # browser, not from a literal, because a hardcoded version drifts from
 # whatever Chromium is installed and claiming an older Chrome than the JS
 # engine reports is itself a mismatch. This constant is the HTTP path's
@@ -102,7 +102,7 @@ def mask_secrets(text: str) -> str:
     Globally on purpose. Playwright repeats a CDP endpoint five times in one
     error (the message plus a four-line call log), so a masker that stops
     after the first match prints the password four more times while looking
-    like it works (CLAUDE.md §8).
+    like it works.
 
     Host and port are KEPT. Which exit a run used is the point of the log
     and is not the secret.
@@ -122,7 +122,7 @@ class VisitorError(RuntimeError):
 class TransportError(RuntimeError):
     """Nothing was reached: a dead proxy, DNS, a refused connection.
 
-    Its own type because CLAUDE.md §8 says a proxy failure is not a timeout
+    Its own type because a proxy failure is not a timeout
     and the two want opposite responses — a timeout deserves another try at
     the same exit, a dead proxy a different one. Catching only the timeout
     type is what let this escape as a traceback in an older repo.
@@ -174,7 +174,7 @@ def mint_visitor_cookies(session: Optional[requests.Session] = None,
     Raises VisitorError when passport refuses and TransportError when
     nothing was reached. Never returns an empty dict silently: a function
     that returns `{}` on error is this codebase's most common historical bug
-    class (CLAUDE.md §8), and an empty cookie jar here would send every
+    class, and an empty cookie jar here would send every
     later request into a `-100` that looks like the site's fault.
     """
     s = session or requests.Session()
@@ -321,7 +321,7 @@ class WeiboClient:
 # these three modes, and until this existed no COMMAND stood behind it:
 # `WeiboClient` was library-only, and every runnable entry point launched
 # Chromium. A claim a user cannot execute is a claim they have to take on
-# trust (CLAUDE.md §13).
+# trust.
 #
 # Deliberately a fourth CLI rather than an `--engine http` flag on the three
 # browser engines. Those three declare one identical flag set, asserted in
@@ -333,7 +333,7 @@ class WeiboClient:
 # point: `--cdp-endpoint`, `--fingerprint`, `--fp-country`, `--fp-tags` and
 # `--headless/--headful` all describe a browser, and there is none here.
 # Offering them would be the kind of setting that looks configurable and is
-# not (§3).
+# not.
 
 import argparse
 import sys
@@ -380,8 +380,38 @@ def _recover_long_text(client: "WeiboClient", rows) -> tuple:
     return recovered, len(flagged), false_flags
 
 
+def _fetch_page(client: "WeiboClient", url: str, args, page_num: int) -> tuple:
+    """`(state, payload)` for one page, retrying transient answers.
+
+    The same extra-retry semantics as the browser engines: `--retries N`
+    allows N further attempts after the first, for a state the policy
+    marks retryable (an unrecognised answer, a transport fault). A wall is
+    never retried. The visitor cookie is re-minted at most once per page,
+    on the first attempt, as `page_flow.VISITOR_MINTS_PER_PAGE` says.
+    """
+    import page_flow
+
+    attempts = max(1, int(args.retries) + 1)
+    state, payload = "unknown", {}
+    for attempt in range(1, attempts + 1):
+        try:
+            state, payload = client.fetch(url, allow_mint=(attempt == 1))
+        except TransportError as exc:
+            state, payload = "transport_error", {}
+            log.warning("[!] page %d attempt %d: %s", page_num, attempt,
+                        mask_secrets(str(exc))[:160])
+        if (page_flow.should_parse(state) or page_flow.counts_as_blocked(state)
+                or not page_flow.should_retry(state)):
+            return state, payload
+        if attempt < attempts:
+            log.info("[i] page %d attempt %d answered %s — retrying in %.1fs",
+                     page_num, attempt, state, float(args.retry_delay))
+            time.sleep(float(args.retry_delay))
+    return state, payload
+
+
 def scrape(args) -> int:
-    from output_writer import EXIT_API_ERROR, EXIT_NO_PRODUCTS, dedupe_by_key, finish_run
+    from output_writer import EXIT_API_ERROR, dedupe_by_key, finish_run
     import page_flow
 
     client = WeiboClient(proxy=args.proxy, delay=args.delay)
@@ -434,21 +464,31 @@ def scrape(args) -> int:
                 log.warning("[!] could not read the profile for %s — follower "
                             "counts will be null on every row", uid)
 
+        unresolved = False
         if args.mode == "post" and not mid and mblogid:
-            state, payload = client.fetch(P.SHOW_URL.format(mblogid=mblogid))
+            show_url = P.SHOW_URL.format(mblogid=mblogid)
+            state, payload = _fetch_page(client, show_url, args, 0)
             if state == "content":
                 mid = (str(payload.get("mid")) if payload.get("mid")
                        else str(payload.get("idstr")) if payload.get("idstr")
                        else None)
             if not mid:
+                # Decided by what /statuses/show answered, through
+                # finish_run: a wall is blocked (3), "no such post" is a
+                # real empty answer (4), anything else means the post was
+                # never reached (5). A bare exit 4 here used to claim "no
+                # comments" for a lookup that failed.
+                unresolved = True
+                blocked, stop_reason = page_flow.unresolved_post_outcome(state)
+                start_url = final_url = show_url
                 log.error("[x] could not resolve %s to a numeric mid, which "
-                          "is the id the comments endpoint takes", mblogid)
-                return EXIT_NO_PRODUCTS
+                          "is the id the comments endpoint takes "
+                          "(/statuses/show answered %s)", mblogid, state)
 
         cursor = 0
-        for page_num in range(1, pages + 1):
+        for page_num in range(1, (0 if unresolved else pages) + 1):
             if args.mode == "hot":
-                url = P.hot_feed_url(count=25)
+                url = P.hot_feed_url(count=25, group=args.category)
             elif args.mode == "user":
                 url = P.user_feed_url(uid, cursor)
             else:
@@ -457,14 +497,14 @@ def scrape(args) -> int:
                 start_url = url
             final_url = url
 
-            state, payload = client.fetch(url)
+            state, payload = _fetch_page(client, url, args, page_num)
             if not page_flow.should_parse(state):
                 pages_failed.append(page_num)
                 if page_flow.counts_as_blocked(state):
                     blocked = True
                     stop_reason = state
-                    log.error("[x] page %d: %s — this wants an ACCOUNT, and "
-                              "no exit address supplies one.", page_num, state)
+                    log.error("[x] page %d: %s — %s", page_num, state,
+                              page_flow.blocked_hint(state))
                 else:
                     stop_reason = f"error_on_page_{page_num}"
                     log.error("[x] page %d: %s", page_num, state)
@@ -473,6 +513,16 @@ def scrape(args) -> int:
             page_rows, cursor_next = P.rows_for_mode(
                 args.mode, payload, page=page_num, parent_sku=mblogid,
                 author_followers=author_followers)
+            if page_flow.served_rows_we_could_not_read(state, page_rows):
+                # The site served rows and the parser read none: the
+                # response shape changed. Not an empty feed (exit 4), and
+                # not a complete run either.
+                pages_failed.append(page_num)
+                stop_reason = page_flow.PARSER_FAILURE_REASON
+                log.error("[x] page %d was served with rows in it and the "
+                          "parser read none of them — %s", page_num,
+                          stop_reason)
+                break
             fresh = dedupe_by_key(page_rows, seen, key=dedupe_key)
             rows.extend(fresh)
             pages_completed += 1
@@ -534,6 +584,8 @@ def scrape(args) -> int:
 
 
 def parse_args(argv=None):
+    import env_config
+
     p = argparse.ArgumentParser(
         description="Scrape Weibo with NO browser at all — the visitor "
                     "handshake and the site's own JSON over plain HTTPS. "
@@ -545,24 +597,34 @@ def parse_args(argv=None):
     p.add_argument("--url", default=None,
                    help="An account or post URL, or a bare id. Required for "
                         "--mode user and --mode post.")
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--category", default=P.DEFAULT_FEED_GROUP,
+                   help="The hot feed's group id. Default 102803 (推荐), the "
+                        "ONLY value verified.")
+    p.add_argument("--pages", type=env_config.positive_int, default=1,
                    help=f"How many fetches to make (max {P.MAX_PAGES}). The "
                         "hot feed has no page 2: N there means N fetches of "
                         "a feed that re-rolls.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="json")
     p.add_argument("--out", default="weibo_posts")
-    p.add_argument("--delay", type=float, default=1.0)
+    p.add_argument("--delay", type=env_config.non_negative_float, default=1.0)
+    p.add_argument("--retries", type=env_config.non_negative_int, default=2,
+                   help="Extra attempts per page for a transient answer "
+                        "(default 2). A wall is never retried.")
+    p.add_argument("--retry-delay", type=env_config.non_negative_float,
+                   default=3.0)
     p.add_argument("--proxy", default=None,
                    help="Credentials are read from .env and never from a "
                         "command line, where `ps` can see them.")
     p.add_argument("--allow-empty", action="store_true")
     args = p.parse_args(argv)
-    import env_config
     env_config.apply(args)
     if args.pages < 1:
         p.error("--pages must be at least 1")
     if args.pages > P.MAX_PAGES:
         p.error(f"--pages above {P.MAX_PAGES} is refused")
+    if not str(args.category or "").isdigit():
+        p.error(f"--category must be a numeric feed group id, got "
+                f"{args.category!r}")
     return args
 
 

@@ -61,7 +61,7 @@ jobs:
           ENGINE_LIBS = ("playwright", "pyppeteer", "selenium", "webdriver_manager")
           failed = []
 
-          for script in ["playwright_scraper.py", "puppeteer_scraper.py",
+          for script in ["weibo_api.py", "playwright_scraper.py", "puppeteer_scraper.py",
                          "selenium_scraper.py", "scraper_api_client.py",
                          "fingerprint_client.py", "env_config.py",
                          "diff_runs.py"]:
@@ -83,7 +83,7 @@ jobs:
       - name: Committed sample output is real
         # CALLS the shipped check rather than reimplementing it. The inline
         # copy that used to live here still imported the donor repo's row
-        # class and failed on this repo's first push — CLAUDE.md §17's
+        # class and failed on this repo's first push — the rule of
         # "one implementation, invoked from both CI and the offline suite",
         # earned again: two sources of truth drifted, and the one nobody
         # runs locally is the one that broke.

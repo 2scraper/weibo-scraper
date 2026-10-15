@@ -66,7 +66,7 @@ _PLACEHOLDERS = {
 # A literal-only check reported both of those as CONFIGURED, so `cp
 # .env.example .env` followed by a run connected to cb.2captcha.com with the
 # string `{login}-zone-…` as its username and got a 401 — a confusing failure
-# a long way from its cause, which is precisely what §3's rule exists to
+# a long way from its cause, which is precisely what this family's rule exists to
 # prevent. Any `{…}` left in a value means the line was never filled in.
 _BRACED_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
 
@@ -237,3 +237,37 @@ if __name__ == "__main__":
     extras = unknown_keys()
     if extras:
         print("\nUnrecognised keys in .env (typo?): " + ", ".join(extras))
+
+
+# --------------------------------------------------------------------------
+# Numeric flag validation, shared by every CLI here
+# --------------------------------------------------------------------------
+# Used as argparse `type=` callables, so a bad value is refused with exit 2
+# and an error that names the flag ("argument --retries: must be 0 or more")
+# before any network work. A negative --retries used to be clamped silently
+# to one attempt, and a negative --delay reached time.sleep() between pages
+# and crashed the run with its rows unsaved.
+
+def _number(cast, minimum, text):
+    import argparse
+    try:
+        value = cast(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"expected a number, got {text!r}") from None
+    if value != value or value < minimum:  # NaN fails the first test
+        raise argparse.ArgumentTypeError(
+            f"must be {minimum} or more, got {text!r}")
+    return value
+
+
+def non_negative_int(text):
+    return _number(int, 0, text)
+
+
+def positive_int(text):
+    return _number(int, 1, text)
+
+
+def non_negative_float(text):
+    return _number(float, 0, text)

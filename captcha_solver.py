@@ -3,10 +3,9 @@ captcha_solver.py
 ------------------
 Shared helper used by all three scrapers (Playwright / Selenium / Puppeteer).
 
-Detection runs after EVERY page navigation in the main loop of all three
-scrapers, regardless of what URL was requested (category hub, product page,
-sign-in, checkout, anything) — this is deliberate, not scoped to any one
-page. If Weibo renders a captcha challenge anywhere, this fires.
+The engines call it when a response has been classified as a challenge
+(and, under `--solve-captcha always`, also on the landing page before each
+request). It inspects the page the session is on.
 
 **No challenge was rendered on any route this repo reads** — five captures,
 zero widgets, zero challenge iframes. Weibo does have two captchas wired into
@@ -18,9 +17,10 @@ site, and a scraper that cannot name what stopped it is much harder to fix.
 
 Detection therefore stays BROAD (which challenge a visitor meets depends on
 the exit and on what the address has been doing) while spending stays
-NARROW: `--solve-captcha when-blocked` is the default and counts product
-links before paying, `page_flow.SOLVES_PER_PAGE` caps a page at one
-purchase, and `page_flow.STATE_POLICY` — not this file — decides which state
+NARROW: `--solve-captcha when-blocked` is the default and buys nothing
+until a response has been classified as a challenge,
+`page_flow.SOLVES_PER_PAGE` caps a page at one purchase across all its
+retries, and `page_flow.STATE_POLICY` — not this file — decides which state
 is worth money at all.
 
 Flow:
@@ -727,4 +727,4 @@ solve_recaptcha_v3 = solve_recaptcha
 # what the address has been doing — a narrow list is how a challenge gets
 # reported as an empty page months later. A solver for a challenge this site
 # has never been observed to serve is dead code; a DETECTOR for one is cheap
-# insurance. See the family note in CLAUDE.md.
+# insurance.

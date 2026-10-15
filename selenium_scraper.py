@@ -12,7 +12,7 @@ flags, same exit codes, same run status, same rows.
 Two things this engine genuinely cannot do
 -------------------------------------------
 Stated here rather than left to be discovered, because both look like bugs
-and neither is one (CLAUDE.md §6):
+and neither is one:
 
   * **`--cdp-endpoint` with credentials is refused.** Playwright's
     `connect_over_cdp` and pyppeteer's `browserWSEndpoint` both take a full
@@ -36,8 +36,8 @@ loaded weibo.com page returns the payload. See playwright_scraper.py's
 module docstring for the measurement.
 
 So this engine lands on `https://weibo.com/` and fetches through
-`execute_async_script`. Note the dialect, which is exactly why CLAUDE.md
-§1 forbids sharing JavaScript between engines: Selenium takes a function
+`execute_async_script`. Note the dialect, which is exactly why no
+JavaScript is shared between engines: Selenium takes a function
 BODY with an explicit `return` and an injected callback, while pyppeteer
 takes an arrow function. The same snippet in a shared module would work in
 one and be a syntax error in the other.
@@ -54,7 +54,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-# Imported at MODULE level on purpose — see playwright_scraper.py (§10).
+# Imported at MODULE level on purpose — see playwright_scraper.py.
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException as SeleniumTimeout
 from selenium.common.exceptions import WebDriverException as SeleniumError
@@ -64,7 +64,7 @@ import env_config
 import page_flow
 import product_parser as P
 import weibo_api as W
-from output_writer import (EXIT_API_ERROR, EXIT_NO_PRODUCTS, Post,
+from output_writer import (EXIT_API_ERROR, Post,
                            dedupe_by_key, finish_run)
 import proxy_pool
 from proxy_pool import ProxyPool
@@ -72,7 +72,7 @@ from proxy_pool import ProxyPool
 log = logging.getLogger("weibo.selenium")
 
 # --------------------------------------------------------------------------
-# Site constants — byte-identical to the other two engines (§5)
+# Site constants — byte-identical to the other two engines
 # --------------------------------------------------------------------------
 
 MIN_CARD_MATCHES = page_flow.MIN_CARD_MATCHES
@@ -101,7 +101,7 @@ fetch(url, {credentials: 'include', headers: headers})
 
 
 def _chrome_ua(caps: Dict[str, Any]) -> str:
-    """Build a UA from the Chrome that chromedriver actually started (§8)."""
+    """Build a UA from the Chrome that chromedriver actually started."""
     version = ""
     try:
         version = str((caps or {}).get("browserVersion")
@@ -141,7 +141,7 @@ _PROXY_ERRORS = (
 
 
 def _proxy_failure(exc: Exception) -> str:
-    """Name the proxy error in an exception, or "" (§8)."""
+    """Name the proxy error in an exception, or ""."""
     text = str(exc or "")
     for marker in _PROXY_ERRORS:
         if marker in text:
@@ -184,8 +184,7 @@ class _BrowserSession:
             opts.add_argument("--no-sandbox")
             opts.add_argument("--disable-dev-shm-usage")
             # The shared module splits this correctly; this was
-            # hand-rolled here until that turned out to be true
-            # (CLAUDE.md §16).
+            # hand-rolled here until that turned out to be true.
             server, creds = proxy_pool.split_credentials(self.proxy_url)
             had_creds = creds is not None
             if had_creds:
@@ -225,7 +224,7 @@ class _BrowserSession:
     def rotate_to(self, proxy_url):
         """Tear this session down and build another on a different exit.
 
-        A rotation is a FRESH BROWSER, not a swapped proxy (CLAUDE.md §8):
+        A rotation is a FRESH BROWSER, not a swapped proxy:
         cookies a bot manager issued against exit A and replayed from exit B
         are a stronger signal than either address alone. So the visitor
         cookie is re-minted through the new exit too, rather than carried
@@ -267,7 +266,8 @@ class _BrowserSession:
         the Scraping Browser's exit. Measured 2026-09-21 in one session:
         the remote browser left from a residential US address (AS11776,
         California) while the HTTP handshake left from a Finnish datacenter
-        (AS24940). CLAUDE.md §8 — and it also wasted what the Scraping
+        (AS24940). Cookies issued against one exit and replayed from another
+        are a stronger signal than either address alone — and it also wasted what the Scraping
         Browser is bought for, since the cookie IS the session identity.
         """
         if self.remote:
@@ -354,18 +354,18 @@ def handle_captcha_if_present(driver, args,
     offline checks, and it would have raised AttributeError at the exact
     moment a challenge first appeared. It surfaced only once a real API key
     arrived and the suite's signature-binding check was widened to cover
-    this module (CLAUDE.md §16: the credential-gated paths are the ones
+    this module (the credential-gated paths are the ones
     nobody ran).
 
     `budget` is NOT optional and is shared with the other call site in the
-    same attempt. §23: every engine in this family calls this twice per
+    same attempt. Every engine in this family calls this twice per
     attempt and only the second call was ever counted, so
     `SOLVES_PER_PAGE = 1` enforced nothing.
 
     Expected never to fire on Weibo: no challenge was rendered on any route
     this repo reads. It is here because Weibo has two captcha vendors wired
     into its own page chrome, so one appearing later is a change in the
-    site rather than an impossibility (§19).
+    site rather than an impossibility.
     """
     if args.solve_captcha == "never":
         return False
@@ -388,7 +388,7 @@ def handle_captcha_if_present(driver, args,
     if marker and marker not in P.CHALLENGE_MARKERS:
         # A login wall is not a challenge. Nothing is being tested, access
         # is being declined, and paying for a request the API will reject
-        # is worse than reporting the page unsolved (CLAUDE.md §19).
+        # is worse than reporting the page unsolved.
         log.info("[i] %r is a login wall, not a challenge — no solve "
                  "attempted (this repo does not implement account login)",
                  marker)
@@ -396,8 +396,8 @@ def handle_captcha_if_present(driver, args,
 
     import captcha_solver as CS
 
-    # BOTH detectors, then reconcile — never short-circuit on the first
-    # (CLAUDE.md §8). They can disagree about the same page, and the live
+    # BOTH detectors, then reconcile — never short-circuit on the first.
+    # They can disagree about the same page, and the live
     # one sees a widget the markup only hints at.
     static_hit = CS.detect_recaptcha_v3(html, page_url)
     runtime_hit = None
@@ -445,7 +445,7 @@ def handle_captcha_if_present(driver, args,
     return True
 
 def _snapshot(body: str, url: str, args, page_num: int, state: str) -> None:
-    """Write the exact bytes this run saw, on success too (§9)."""
+    """Write the exact bytes this run saw, on success too."""
     if not args.dump_html:
         return
     path = f"{args.out}_debug.page{page_num}.{state}.json"
@@ -465,10 +465,16 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
     last_error: Optional[str] = None
     blocked_tries = 0
 
+    # ONE allowance for this page, created before the retry loop: a retry
+    # or an exit rotation does not hand the page a fresh one.
+    budget = page_flow.SolveBudget()
     for attempt in range(1, attempts + 1):
-        budget = page_flow.SolveBudget()
         try:
-            handle_captcha_if_present(session.driver, args, budget)
+            if args.solve_captcha == "always":
+                # Pre-classification call site, only on request. Under
+                # `when-blocked` nothing is bought until the response has
+                # been read and classified as a challenge.
+                handle_captcha_if_present(session.driver, args, budget)
             status, body = _api_get(session, url)
             state = page_flow.classify(body, status, url)
 
@@ -498,12 +504,11 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 # whether this particular state is worth another attempt;
                 # RETRY_ON_BLOCKED says whether a blocked page is worth
                 # re-fetching at all on this site. Both are consulted, so
-                # neither is prose pretending to be enforcement (§17).
+                # neither is prose pretending to be enforcement.
                 if not (page_flow.RETRY_ON_BLOCKED
                         and page_flow.should_retry(state)):
-                    log.error("[x] page %d: %s — this wants an ACCOUNT, not a "
-                              "different address or another attempt. Not "
-                              "retrying.", page_num, state)
+                    log.error("[x] page %d: %s — %s Not retrying.",
+                              page_num, state, page_flow.blocked_hint(state))
                     return PageOutcome(page_num, url, state=state, error=state)
                 budgeted = (len(pool) - 1 if pool
                             else page_flow.BLOCK_RETRIES_WITHOUT_POOL)
@@ -527,7 +532,7 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 log.warning("[!] page %d attempt %d: the exit failed (%s)",
                             page_num, attempt, which)
                 if pool and len(pool) > 1:
-                    # A rotation is a FRESH BROWSER (CLAUDE.md §8): cookies
+                    # A rotation is a FRESH BROWSER: cookies
                     # a bot manager issued against exit A and replayed from
                     # exit B are a stronger signal than either address
                     # alone, so the session is torn down and rebuilt rather
@@ -537,6 +542,14 @@ def _fetch_one(session: _BrowserSession, args, pool: Optional[ProxyPool],
                 last_error = f"browser: {_mask(exc)[:160]}"
                 log.warning("[!] page %d attempt %d: %s", page_num, attempt,
                             last_error)
+        except RuntimeError as exc:
+            # The visitor handshake (or the rebuilt browser after a rotation)
+            # could not reach passport. That is this page failing, and it
+            # goes through the retry budget like any transport fault; it
+            # used to escape to main() as exit 1 and lose earlier pages.
+            last_error = f"session: {_mask(exc)[:160]}"
+            log.warning("[!] page %d attempt %d: %s", page_num, attempt,
+                        last_error)
 
         if attempt < attempts:
             time.sleep(max(0.0, float(args.retry_delay)))
@@ -618,13 +631,25 @@ def _resolve_target(args) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     return P.uid_from_url(args.url), mblogid, mid
 
 
-def _resolve_mid(session: _BrowserSession, mblogid: str) -> Optional[str]:
-    status, body = _api_get(session, P.SHOW_URL.format(mblogid=mblogid))
-    if page_flow.classify(body, status) != "content":
-        return None
+def _resolve_mid(session: _BrowserSession, mblogid: str
+                 ) -> Tuple[Optional[str], str]:
+    """`(mid, state)` for a base-62 post id, via /statuses/show.
+
+    The state is returned with it so the caller can tell a refused
+    or failed lookup from a post that does not exist.
+    """
+    try:
+        status, body = _api_get(session, P.SHOW_URL.format(mblogid=mblogid))
+    except (SeleniumError, SeleniumTimeout, RuntimeError) as exc:
+        log.warning("[!] /statuses/show failed: %s", _mask(exc)[:160])
+        return None, "transport_error"
+    state = page_flow.classify(body, status)
+    if state != "content":
+        return None, state
     payload = P._payload_dict(body)
-    return (str(payload.get("mid")) if payload.get("mid")
-            else str(payload.get("idstr")) if payload.get("idstr") else None)
+    mid = (str(payload.get("mid")) if payload.get("mid")
+           else str(payload.get("idstr")) if payload.get("idstr") else None)
+    return mid, state
 
 
 def scrape(args) -> int:
@@ -632,7 +657,7 @@ def scrape(args) -> int:
     # proxy_pool.from_args, so a run that passed both flags crashed
     # on the way to this message instead of reading it — a refusal
     # that exists in the source and cannot be reached is not a
-    # refusal (CLAUDE.md §17).
+    # refusal.
     if args.cdp_endpoint and (args.proxy or args.proxy_file):
         # Exit 2, the family's code for bad usage. A bare
         # `raise SystemExit("...")` exits 1, which is "crash" — and a caller
@@ -686,7 +711,15 @@ def scrape(args) -> int:
         author_followers = None
 
         if args.mode == "user":
-            status, body = _api_get(session, P.profile_info_url(uid))
+            try:
+                status, body = _api_get(session, P.profile_info_url(uid))
+            except (SeleniumError, SeleniumTimeout, RuntimeError) as exc:
+                # The profile only adds context columns. Its failure
+                # must not end the run as a crash (exit 1) before the
+                # feed itself has been asked for.
+                log.warning("[!] profile request failed: %s",
+                            _mask(exc)[:160])
+                status, body = None, ""
             if page_flow.classify(body, status) == "content":
                 prof = P.parse_profile(body)
                 author_followers = prof.get("followers_count")
@@ -697,17 +730,28 @@ def scrape(args) -> int:
                 log.warning("[!] could not read the profile for %s — follower "
                             "counts will be null on every row", uid)
 
+        unresolved = False
         if args.mode == "post" and not mid and mblogid:
-            mid = _resolve_mid(session, mblogid)
+            mid, show_state = _resolve_mid(session, mblogid)
             if not mid:
-                log.error("[x] could not resolve %s to a numeric mid, which "
-                          "is the id the comments endpoint takes", mblogid)
-                return EXIT_NO_PRODUCTS
+                # Decided by what /statuses/show answered, through
+                # finish_run: a wall is blocked (3), "no such post" is
+                # a real empty answer (4), anything else means the
+                # post was never reached (5). A bare exit 4 here used
+                # to claim "no comments" for a lookup that failed.
+                unresolved = True
+                blocked, stop_reason = page_flow.unresolved_post_outcome(
+                    show_state)
+                start_url = final_url = P.SHOW_URL.format(mblogid=mblogid)
+                log.error("[x] could not resolve %s to a numeric mid, "
+                          "which is the id the comments endpoint takes "
+                          "(/statuses/show answered %s)", mblogid,
+                          show_state)
 
         cursor: Any = 0
-        for page_num in range(1, pages + 1):
+        for page_num in range(1, (0 if unresolved else pages) + 1):
             if args.mode == "hot":
-                url = P.hot_feed_url(count=25)
+                url = P.hot_feed_url(count=25, group=args.category)
             elif args.mode == "user":
                 url = P.user_feed_url(uid, cursor)
             else:
@@ -728,6 +772,18 @@ def scrape(args) -> int:
                     stop_reason = outcome.state
                     break
                 stop_reason = f"error_on_page_{page_num}"
+                break
+
+            if page_flow.served_rows_we_could_not_read(outcome.state,
+                                                       outcome.rows):
+                # The site served rows and the parser read none: the
+                # response shape changed. Not an empty feed (exit 4),
+                # and not a complete run either.
+                pages_failed.append(page_num)
+                stop_reason = page_flow.PARSER_FAILURE_REASON
+                log.error("[x] page %d was served with rows in it and the "
+                          "parser read none of them — %s", page_num,
+                          stop_reason)
                 break
 
             fresh = dedupe_by_key(outcome.rows, seen, key=dedupe_key)
@@ -809,14 +865,14 @@ def parse_args(argv=None):
     p.add_argument("--category", default=DEFAULT_FEED_GROUP,
                    help="The hot feed's group id. Default 102803 (推荐), the "
                         "ONLY value verified.")
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=env_config.positive_int, default=1,
                    help=f"How many fetches to make (max {P.MAX_PAGES}).")
     p.add_argument("--format", choices=["json", "csv", "both"], default="json")
     p.add_argument("--out", default="weibo_posts")
-    p.add_argument("--delay", type=float, default=1.0)
-    p.add_argument("--retries", type=int, default=2)
-    p.add_argument("--retry-delay", type=float, default=3.0)
-    p.add_argument("--concurrency", type=int, default=1,
+    p.add_argument("--delay", type=env_config.non_negative_float, default=1.0)
+    p.add_argument("--retries", type=env_config.non_negative_int, default=2)
+    p.add_argument("--retry-delay", type=env_config.non_negative_float, default=3.0)
+    p.add_argument("--concurrency", type=env_config.positive_int, default=1,
                    help="Refused above 1: neither feed has independent page "
                         "addresses, so a worker cannot be handed a page.")
 
@@ -829,7 +885,7 @@ def parse_args(argv=None):
     # "on-block" as the default — and proxy_pool.ROTATE_MODES has only
     # ("per-run", "per-page"), so every run that passed a proxy died on
     # `ProxyError: rotate must be one of ...` before fetching anything.
-    # CLAUDE.md §17: when a shared module documents a constraint, grep the
+    # When a shared module documents a constraint, grep the
     # callers for values that violate it. Reading the constant instead
     # makes that impossible to get wrong again.
     p.add_argument("--proxy-rotate", choices=list(proxy_pool.ROTATE_MODES),
@@ -838,7 +894,7 @@ def parse_args(argv=None):
                         "FAILURE happens under either mode — the engine "
                         "calls advance() when an exit dies.")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int,
+    p.add_argument("--proxy-block-retries", type=env_config.non_negative_int,
                    default=page_flow.BLOCK_RETRIES_WITHOUT_POOL)
 
     p.add_argument("--twocaptcha-key", default=None)
@@ -882,6 +938,18 @@ def parse_args(argv=None):
         p.error("--pages must be at least 1")
     if args.pages > P.MAX_PAGES:
         p.error(f"--pages above {P.MAX_PAGES} is refused")
+    if args.concurrency > 1:
+        # Refused, not warned and then run with 1: neither feed this repo
+        # reads has independent page addresses (page N's cursor does not
+        # exist until page N-1 arrives), so a worker cannot be handed a page.
+        p.error("--concurrency above 1 is refused: neither the hot feed nor "
+                "a cursor has independent page addresses")
+    if not str(args.category or "").isdigit():
+        p.error(f"--category must be a numeric feed group id, got "
+                f"{args.category!r}")
+    if args.fingerprint:
+        p.error("--fingerprint is not applied by this engine; use "
+                "playwright_scraper.py, which applies it to the browser context")
     return args
 
 
