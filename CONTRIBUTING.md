@@ -99,7 +99,7 @@ history needs a decision, not a red check on every push.
 Then the rest of the presentation, in the order that matters:
 
 1. `python3 smoke_test.py` green, and the canary dispatched at least once.
-   Both of its jobs (the hot feed, and user + comments) run daily with no
+   Both of its jobs (the hot feed, and user + comments) run weekly (Mondays) with no
    secrets at all and are expected to be green — the README's central claim
    is that these modes need no account, key or proxy, and a green badge is
    that claim under test.
