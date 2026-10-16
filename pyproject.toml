@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "weibo-scraper"
-version = "0.1.0"
+version = "0.1.1"
 description = "Weibo (weibo.com) scraper: the public hot feed, one account's posts and one post's comments."
 readme = "README.md"
 license = "MIT"

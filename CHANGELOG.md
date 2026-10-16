@@ -10,6 +10,8 @@ notes lead with it.
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-10-16
+
 > **Behaviour change.** `--allow-empty` now writes an empty file only for a
 > genuine empty result, and its sidecar says `status: empty` (was
 > `failed`). A blocked or failed run with `--allow-empty` no longer
@@ -315,4 +317,5 @@ First release. Three modes, three engines, all run live against weibo.com.
 - `--category` accepts a hot-feed group id; only the default `102803` (推荐)
   was tested.
 
+[0.1.1]: https://github.com/2scraper/weibo-scraper/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/2scraper/weibo-scraper/releases/tag/v0.1.0
