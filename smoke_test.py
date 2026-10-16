@@ -3289,6 +3289,116 @@ def _allow_empty_contract(O, row_cls):
     return out
 
 
+def _scraper_api_run(argv, body, http_code=200, api_status=200, before=None):
+    """Run scraper_api_client.main() with requests.post stubbed: no network,
+    and the stub key below never leaves this process. Returns
+    (exit, files after, posts sent)."""
+    import scraper_api_client as sac
+    calls = []
+
+    class _Resp:
+        status_code = api_status
+        headers = {}
+        text = "api said no"
+
+        def json(self):
+            return {"status": "success", "http_code": http_code, "body": body}
+
+    def _post(url, headers=None, json=None, timeout=None):  # noqa: A002
+        calls.append(url)
+        return _Resp()
+
+    real_post, real_argv, real_sleep = sac.requests.post, sys.argv, sac.time.sleep
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "run")
+        for ext, text in (before or {}).items():
+            with open(out + ext, "w", encoding="utf-8") as f:
+                f.write(text)
+        sac.requests.post, sac.time.sleep = _post, (lambda s: None)
+        sys.argv = (["scraper_api_client.py", "--key", "stub-not-a-key",
+                     "--out", out, "--retry-delay", "0"] + argv)
+        os.chdir(d)   # no .env from the checkout reaches the run
+        try:
+            with redirect_stdout(open(os.devnull, "w")):
+                rc = sac.main()
+        finally:
+            os.chdir(cwd)
+            sac.requests.post, sys.argv, sac.time.sleep = real_post, real_argv, real_sleep
+        files = {}
+        for ext in (".json", ".csv", ".meta.json"):
+            if os.path.exists(out + ext):
+                with open(out + ext, encoding="utf-8") as f:
+                    files[ext] = f.read()
+    return rc, files, len(calls)
+
+
+def test_scraper_api_client_follows_the_run_contract():
+    """scraper_api_client.py wrote through `save`, not `finish_run`: zero
+    posts was exit 4 whatever came back (an unrecognised body, the visitor
+    gate, a parser that lost the rows), and `--allow-empty` never wrote an
+    empty result or a sidecar. Driven through the real main() with only
+    requests.post stubbed. `user_end` is the real end-of-list answer
+    (`ok: 1`, `data.list: []`) — the site's own empty marker."""
+    import output_writer as O
+    user = ["--mode", "user", "--url", "https://weibo.com/u/900000001"]
+    end = json.dumps(USER_END)
+
+    rc, files, _ = _scraper_api_run(user + ["--allow-empty"], end)
+    meta = json.loads(files.get(".meta.json", "{}"))
+    eq((rc, files.get(".json", "").strip(), meta.get("status")),
+       (O.EXIT_NO_PRODUCTS, "[]", "empty"),
+       "Scraper API: the site's empty list + --allow-empty is exit 4, [] and status empty")
+    check(files.get(".csv", "").count("\n") == 1 and files[".csv"].startswith("source,"),
+          "Scraper API: the genuine empty CSV is its header alone")
+
+    rc, files, _ = _scraper_api_run(user, end)
+    eq((rc, sorted(files)), (O.EXIT_NO_PRODUCTS, []),
+       "Scraper API: a genuine empty without --allow-empty is exit 4 and writes nothing")
+
+    rc, files, _ = _scraper_api_run([], json.dumps(HOT))
+    meta = json.loads(files.get(".meta.json", "{}"))
+    eq((rc, meta.get("status"), meta.get("transport")), (0, "complete", "scraper_api"),
+       "Scraper API: a served hot feed is exit 0 with a complete sidecar")
+    check(len(json.loads(files.get(".json", "[]"))) == len(HOT["statuses"]),
+          "Scraper API: every served post is written")
+
+    good = {".json": '[{"sku": "kept"}]', ".meta.json": '{"status": "complete"}'}
+    lost = dict(HOT, statuses=["not-a-post"] * 3)
+    cases = (
+        ("an unrecognised body", "<html><body>hello</body></html>", 200, 200, O.EXIT_FETCH_FAILED, None),
+        ("the visitor gate", json.dumps(NEEDS_VISITOR), 200, 200, O.EXIT_FETCH_FAILED, None),
+        ("rows the parser lost", json.dumps(lost), 200, 200, O.EXIT_FETCH_FAILED, "parser_found_nothing"),
+        ("the navigation 403", json.dumps(BAD_REQUEST), 403, 200, O.EXIT_FETCH_FAILED, "bad_request"),
+        ("the login wall", json.dumps(LOGIN_WALL), 403, 200, O.EXIT_BLOCKED, "login_wall"),
+        ("an API error", "", 200, 422, O.EXIT_FETCH_FAILED, "scraper_api_error"),
+        ("the challenge", "<html><body><div class='geetest_panel'></div></body></html>",
+         200, 200, O.EXIT_BLOCKED, "challenge"),
+    )
+    for label, body, code, api, want_rc, want_reason in cases:
+        rc, files, calls = _scraper_api_run(["--allow-empty", "--retries", "1"], body, code, api, before=good)
+        eq(rc, want_rc, f"Scraper API: {label} exits {want_rc}")
+        eq(files, good, f"Scraper API: {label} keeps the earlier output and sidecar byte for byte")
+        eq(calls, 2 if label == "the challenge" else 1,
+           f"Scraper API: only a challenge is retried within --retries (each attempt is billed): {label}")
+        rc, files, _ = _scraper_api_run(["--allow-empty"], body, code, api)
+        meta = json.loads(files.get(".meta.json", "{}"))
+        eq((rc, ".json" in files, meta.get("status")),
+           (want_rc, False, "blocked" if want_rc == O.EXIT_BLOCKED else "failed"),
+           f"Scraper API: {label} + --allow-empty with nothing earlier writes only a "
+           f"{'blocked' if want_rc == O.EXIT_BLOCKED else 'failed'} sidecar")
+        if want_reason:
+            eq(meta.get("stop_reason"), want_reason, f"Scraper API: {label} stop_reason")
+    # A served post whose own text quotes the login prose is content, not a wall.
+    quoting = json.loads(json.dumps(HOT))
+    quoting["statuses"][0]["text_raw"] = "\u767b\u5f55\u540e\u4f7f\u7528"
+    rc, files, _ = _scraper_api_run([], json.dumps(quoting, ensure_ascii=False))
+    eq(rc, 0, "Scraper API: a served feed quoting the login prose is exit 0, not blocked")
+    src = inspect.getsource(__import__("scraper_api_client"))
+    check("finish_run(" in src and "save(" not in src,
+          "Scraper API: the client writes through finish_run, not save")
+
+
 def test_allow_empty_writes_only_a_genuine_empty_result():
     import output_writer as O
     for label, got, want in _allow_empty_contract(O, O.Post):

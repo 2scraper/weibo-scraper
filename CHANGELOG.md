@@ -15,6 +15,16 @@ notes lead with it.
 > `failed`). A blocked or failed run with `--allow-empty` no longer
 > replaces an earlier output with an empty file. It keeps its exit code
 > (3 or 5) and leaves that output and its sidecar untouched.
+>
+> **Behaviour change (`scraper_api_client.py`).** It now writes through the
+> shared run contract. Zero posts is exit 4 only when Weibo's own payload is
+> empty. An unreadable body, the visitor gate, or a payload whose rows the
+> parser lost was exit 4 and is now exit 5. A served feed whose text quoted
+> the login prose was exit 3 and is now read as content. A login wall is
+> still exit 3 but is no longer retried, and only a rendered challenge is.
+> `--allow-empty` writes `[]`, a header-only CSV and a `status: empty`
+> sidecar for a genuine empty. Every run that writes rows now also writes a
+> `.meta.json` sidecar.
 
 ### Fixed
 
@@ -33,6 +43,15 @@ notes lead with it.
   - When nothing earlier exists, a blocked or failed `--allow-empty` run
     writes only a sidecar, with `status: blocked` or `failed`.
   - `diff_runs.py` compares an `empty` run like a complete one.
+- **`scraper_api_client.py` called every zero-post answer empty.** It
+  wrote through `save` rather than `finish_run`, so an unreadable body, the
+  visitor gate and a parser that lost the rows all ended as exit 4, and
+  `--allow-empty` never produced an empty result or a sidecar. It now
+  classifies the response, then hands the outcome to `finish_run`. An
+  earlier output is kept whenever nothing was obtained. An offline check
+  drives the real `main()` with the Scraper API stubbed, using the
+  captured fixtures, and asserts the exit code, the files and the number of
+  billed attempts for each outcome.
 
 ## [0.1.0] — 2026-10-15
 
