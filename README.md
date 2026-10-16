@@ -387,6 +387,15 @@ earlier exists there does a blocked or failed `--allow-empty` run write a
 sidecar on its own, with `status: blocked` or `failed`. `diff_runs.py`
 compares an `empty` run like a complete one.
 
+`scraper_api_client.py` follows the same contract and writes through the
+same code. Exit `4` comes only from the site's own empty answer (`ok: 1`
+with an empty list, or `ok: 0` for a reason other than the login wall).
+A body it cannot read, the visitor gate (this client cannot run the
+visitor handshake), Weibo's `{"error":"Forbidden"}` to a navigation, or a
+Scraper API error is exit `5`. The login wall and a rendered challenge are
+exit `3`. Only a rendered challenge is retried (`--retries`), because each
+attempt is a separately billed task.
+
 ---
 
 ## Engines

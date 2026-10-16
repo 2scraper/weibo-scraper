@@ -68,7 +68,7 @@ import page_flow
 import product_parser as P
 from product_parser import (BOT_CHALLENGE_MARKERS,  # noqa: F401
                             detect_bot_challenge, detect_page_state)
-from output_writer import save
+from output_writer import finish_run
 import env_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -230,21 +230,53 @@ def main() -> int:
         logger.error("No 2captcha API key. Pass --key, or better, export TWOCAPTCHA_KEY.")
         return 2
 
-    # A challenge page is not necessarily final (see _run_once), so a
+    # A challenge page is not necessarily final (see _attempt), so a
     # single attempt is not evidence. Each retry is a fresh billable task —
-    # $0.0005 at the observed rate — so the default is deliberately low.
+    # $0.0005 at the observed rate — so the default is deliberately low, and
+    # only a challenge is retried.
     attempts = max(1, args.retries + 1)
     for attempt in range(1, attempts + 1):
-        rc = _run_once(args, attempt, attempts)
-        if rc != 3 or attempt == attempts:
-            return rc
+        outcome = _attempt(args, attempt, attempts)
+        if not outcome["retry"] or attempt == attempts:
+            break
         logger.info("Challenge page on attempt %d/%d — retrying in %ds.",
                     attempt, attempts, args.retry_delay)
         time.sleep(args.retry_delay)
-    return rc
+    return _finish(args, outcome)
 
 
-def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
+def _outcome(*, rows=(), blocked=False, stop_reason, failed=True,
+             retry=False) -> dict:
+    return {"rows": list(rows), "blocked": blocked, "stop_reason": stop_reason,
+            "pages_failed": [1] if failed else [], "retry": retry}
+
+
+def _finish(args, outcome: dict) -> int:
+    """Write through the shared `finish_run`, so this client follows the
+    same contract as the other engines: a genuine empty result is exit 4
+    (and with --allow-empty an empty file plus `status: empty`), blocked is
+    3, never obtained or a parser failure is 5, and an earlier good output
+    is kept whenever nothing was obtained."""
+    rows = outcome["rows"]
+    return finish_run(
+        rows, args.out, args.format, args.allow_empty,
+        blocked=outcome["blocked"], stop_reason=outcome["stop_reason"],
+        pages_requested=1, pages_completed=0 if outcome["pages_failed"] else 1,
+        pages_failed=outcome["pages_failed"], start_url=args.url,
+        final_url=args.url, mode=args.mode, source=P.SOURCE,
+        extra={"transport": "scraper_api"})
+
+
+def _save_debug(args, html: str) -> str:
+    dump = f"{args.out}_scraperapi_debug.html"
+    with open(dump, "w", encoding="utf-8") as f:
+        f.write(html)
+    return dump
+
+
+def _attempt(args, attempt: int = 1, attempts: int = 1) -> dict:
+    """One billed fetch, classified. Returns what `_finish` needs; writes
+    no output itself."""
     if attempts > 1:
         logger.info("Attempt %d/%d", attempt, attempts)
 
@@ -252,12 +284,12 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
         html, upstream_status = fetch_html(args)
     except requests.RequestException as e:
         logger.error("Network error talking to the Scraper API: %s", e)
-        return EXIT_API_ERROR
+        return _outcome(stop_reason="scraper_api_error")
     except RuntimeError as e:
         # HTTP 4xx/5xx from the API, including the 422 that a busy or
         # unreachable cdpurl produces.
         logger.error("%s", e)
-        return EXIT_API_ERROR
+        return _outcome(stop_reason="scraper_api_error")
 
     if args.dump_html:
         with open(args.dump_html, "w", encoding="utf-8") as f:
@@ -279,16 +311,14 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
             "Use playwright_scraper.py, or weibo_api.WeiboClient for a "
             "browserless read — both fetch these URLs successfully with a "
             "free visitor cookie and no key.")
-        return EXIT_API_ERROR
+        return _outcome(stop_reason="bad_request")
 
     # Any state the shared policy counts as blocked (on Weibo that is the
     # login wall and a rendered challenge), not a literal "blocked" state:
     # page_flow.STATE_POLICY has no state of that name, so a string
     # comparison here could never fire.
     if page_flow.counts_as_blocked(state):
-        dump = f"{args.out}_scraperapi_debug.html"
-        with open(dump, "w", encoding="utf-8") as f:
-            f.write(html)
+        dump = _save_debug(args, html)
         logger.error(
             "Weibo did not serve the Scraper API's request (upstream HTTP %s, "
             "%d bytes, state %r) — saved to %s. A 'login_wall' wants an "
@@ -298,10 +328,16 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
             "3, distinct from an empty "
             "result (exit 4).",
             upstream_status, len(html), state, dump)
-        return 3
+        return _outcome(blocked=True, stop_reason=state,
+                        retry=state == "challenge")
 
+    # Only a RENDERED challenge's vocabulary, as in the browser engines. The
+    # visitor and login prose in BOT_CHALLENGE_MARKERS is already decided by
+    # the state above (a login wall is blocked; the visitor gate is not a
+    # refusal this client can retry its way past), and matching it here
+    # also fired on a served payload whose own text quoted that prose.
     vendor = detect_bot_challenge(html)
-    if vendor:
+    if vendor in P.CHALLENGE_MARKERS:
         logger.error(
             "The Scraper API returned a %s bot-challenge page (%d bytes), not real content.",
             vendor, len(html),
@@ -310,23 +346,41 @@ def _run_once(args, attempt: int = 1, attempts: int = 1) -> int:
                      "concluding anything (--retries). Note that no challenge "
                      "was observed on any Weibo route this repo reads, so "
                      "reaching this line is itself news worth an issue.")
-        return 3
+        return _outcome(blocked=True, stop_reason="challenge", retry=True)
+
+    if not page_flow.should_parse(state):
+        # Not the site's payload: an unrecognised body, a transport fault,
+        # or the visitor gate (this client cannot run the visitor
+        # handshake). Nothing here says the feed is empty, so it is never
+        # obtained (exit 5), not "0 posts" (exit 4).
+        dump = _save_debug(args, html)
+        logger.error("Upstream HTTP %s, %d bytes, state %r: not a payload "
+                     "this repo reads — saved to %s. Exit 5: the content was "
+                     "not obtained, which says nothing about the feed.",
+                     upstream_status, len(html), state, dump)
+        return _outcome(stop_reason=f"state_{state}")
 
     products, _cursor = P.rows_for_mode(args.mode, html, page=1)
     logger.info("Parsed %d post(s).", len(products))
 
-    if not products:
-        dump = f"{args.out}_scraperapi_debug.html"
-        with open(dump, "w", encoding="utf-8") as f:
-            f.write(html)
-        logger.warning("0 posts parsed — saved the raw response to %s so "
-                       "you can see what actually came back. If it holds "
-                       "`{\"error\":\"Forbidden\"}` the fetch arrived as a "
-                       "NAVIGATION rather than an XHR, which is the case "
-                       "this engine's docstring says is unverified.", dump)
-        return 4
+    if page_flow.served_rows_we_could_not_read(state, products):
+        # The payload holds rows and the parser read none: the shape
+        # changed under the parser. A parser failure, not an empty feed.
+        dump = _save_debug(args, html)
+        logger.error("The response holds rows and the parser read none of "
+                     "them — %s. Saved to %s.",
+                     page_flow.PARSER_FAILURE_REASON, dump)
+        return _outcome(stop_reason=page_flow.PARSER_FAILURE_REASON)
 
-    return save(products, args.out, args.format, allow_empty=args.allow_empty)
+    if not products:
+        # `empty` is the site's own answer: `ok: 1` with an empty list, or
+        # `ok: 0` with a reason other than the login wall. A genuine empty
+        # result (exit 4).
+        logger.info("Weibo answered with an empty payload (state %r) — a "
+                    "genuine empty result.", state)
+        return _outcome(stop_reason="no_new_products", failed=False)
+
+    return _outcome(rows=products, stop_reason="single_page_mode", failed=False)
 
 
 def parse_args():
@@ -372,8 +426,10 @@ def parse_args():
     wait.add_argument("--wait-state", choices=["load", "domcontentloaded"], default=None,
                       help="Wait for a page load state instead of specific content")
     p.add_argument("--allow-empty", action="store_true",
-                   help="Write output files even when 0 products were parsed. Off by "
-                        "default so a failed fetch can't overwrite a good result.")
+                   help="Write an empty result ([] and a header-only CSV, sidecar "
+                        "status 'empty', exit 4) when Weibo's own payload is empty. "
+                        "A blocked or failed run never writes one, and an earlier "
+                        "output is kept.")
     p.add_argument("--retries", type=env_config.non_negative_int, default=1,
                    help="Extra attempts if a bot-challenge page comes back. One retry is "
                         "usually worth it. Each attempt is a separate billable task, so "
