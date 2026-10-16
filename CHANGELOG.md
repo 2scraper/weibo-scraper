@@ -53,6 +53,10 @@ notes lead with it.
   captured fixtures, and asserts the exit code, the files and the number of
   billed attempts for each outcome.
 
+### Changed
+
+- CI only: the canary now runs weekly (Mondays 06:17 UTC) instead of daily, and on a manual dispatch.
+
 ## [0.1.0] — 2026-10-15
 
 > **Behaviour changes in this section.**

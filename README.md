@@ -459,10 +459,9 @@ Fixture authors and bodies are placeholders: republishing a private
 individual's name and words is a separate act from the site showing them on
 its own page, and the checks need the structure of a post, not the person.
 
-The canary runs a real 3-page scrape daily **from a bare GitHub runner with
+The canary runs a real 3-page scrape weekly (Mondays) **from a bare GitHub runner with
 no secrets**, because the claim at the top of this file is that you do not
-need any. If Weibo ever closes these routes, that badge goes red the next
-morning.
+need any. If Weibo ever closes these routes, that badge goes red on the next weekly run.
 
 ---
 

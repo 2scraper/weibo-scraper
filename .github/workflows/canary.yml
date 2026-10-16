@@ -9,8 +9,8 @@
 # succeeded 5 times out of 5 and 100 requests in 83 seconds drew zero
 # refusals. The README's central claim is that you do not need to buy
 # anything to read these three modes — so this job runs that claim, from a
-# bare runner, every morning. If Weibo ever puts the feed behind a login or
-# starts scoring datacenter addresses, the badge goes red the next day and
+# bare runner, every Monday. If Weibo ever puts the feed behind a login or
+# starts scoring datacenter addresses, the badge goes red on the next weekly run and
 # the claim is retested without anyone having to remember to.
 #
 # A canary that CAN pass without a credential must never be
@@ -30,7 +30,7 @@ name: canary
 
 on:
   schedule:
-    - cron: "17 6 * * *"
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -188,7 +188,7 @@ jobs:
 
       # A large institutional account, chosen on purpose: it posts daily, so
       # the cursor has somewhere to walk, and it is an organisation rather
-      # than a private individual — a daily automated read of one person's
+      # than a private individual — a weekly automated read of one person's
       # timeline is a different thing from reading a newspaper's.
       - name: User mode
         id: user
