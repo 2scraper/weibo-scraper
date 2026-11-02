@@ -1,4 +1,4 @@
-# weibo-scraper
+# Weibo Scraper — Posts, Comments and Hot Feed in Python
 
 [![tests](https://github.com/2scraper/weibo-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/weibo-scraper/actions/workflows/tests.yml)
 [![canary](https://github.com/2scraper/weibo-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/weibo-scraper/actions/workflows/canary.yml)
@@ -6,6 +6,8 @@
 [![licence](https://img.shields.io/badge/licence-MIT-green)](LICENSE)
 [![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-informational)](#engines)
 [![runs without an account](https://img.shields.io/badge/runs%20without-an%20account-success)](#do-you-need-to-buy-anything)
+
+**Weibo scraper** — an open-source (MIT) Python tool that reads weibo.com's public hot feed, one account's posts and one post's comments and writes the full post text, like counts, region and posting client to JSON or CSV. For these three modes it needs no account, key, proxy or Chinese exit IP: measured on 2026-09-21 from a datacenter address in Finland, the hot feed, user posts and comments returned data on every attempt, while search and two other routes require an account, and this repo does not implement account login. Use it to build a dataset of posts and comments, or to compare two runs with `diff_runs.py`.
 
 Scrapes [weibo.com](https://weibo.com) — the public hot feed, one account's
 posts, and one post's comments — in JSON or CSV, through Playwright,
@@ -464,6 +466,23 @@ no secrets**, because the claim at the top of this file is that you do not
 need any. If Weibo ever closes these routes, that badge goes red on the next weekly run.
 
 ---
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [YouTube scraper](https://github.com/2scraper/youtube-scraper) — Comment threads, replies, video metadata and search
+- [Meta Ad Library scraper](https://github.com/2scraper/facebook-ads-scraper) — Every ad of a keyword or advertiser search in Meta's Ad…
+- [Facebook scraper](https://github.com/2scraper/facebook-pages-scraper) — Public Facebook Pages — contacts, followers, owner…
+- [Instagram scraper](https://github.com/2scraper/instagram-scraper) — Public profiles, posts and Reels, read logged out
+- [Snapchat scraper](https://github.com/2scraper/snapchat-scraper) — Public Snapchat profiles, Spotlight engagement and story…
+- [TikTok Ad Library scraper](https://github.com/2scraper/tiktok-ads-scraper) — Ads from TikTok's EU Ad Library
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## Licence and scope
 
